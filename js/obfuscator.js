@@ -1,4 +1,4 @@
-/* Luau obfuscation engine — runs fully in the browser */
+/* Luau obfuscation engine — enhanced passes */
 window.LuauArmor = (function () {
   const GLOBALS = new Set([
     "print", "warn", "error", "assert", "type", "typeof", "tonumber", "tostring",
@@ -9,37 +9,37 @@ window.LuauArmor = (function () {
     "Instance", "Vector3", "CFrame", "Color3", "UDim2", "Enum", "Ray", "Region3",
     "BrickColor", "Random", "require", "getgenv", "getrenv", "getgc", "gethui",
     "syn", "fluxus", "hookfunction", "newcclosure", "clonefunction", "identifyexecutor",
-    "true", "false", "nil", "and", "or", "not", "if", "then", "else", "elseif",
-    "end", "while", "do", "for", "in", "repeat", "until", "function", "local",
-    "return", "break", "continue", "self",
+    "getexecutorname", "Config", "Prey", "true", "false", "nil", "and", "or", "not",
+    "if", "then", "else", "elseif", "end", "while", "do", "for", "in", "repeat",
+    "until", "function", "local", "return", "break", "continue", "self",
   ]);
 
-  const JUNK_TEMPLATES = [
-    "local _J{I}=({N1}+{N2})",
-    "local _J{I}=string.char({N1},{N2},{N3})",
-    "local _J{I}=table.concat({{'{A}','{B}'}})",
-    "local _J{I}=math.floor({N1}*{N2})",
-    "local _J{I}=({N1}~{N2})",
+  const JUNK = [
+    "local _Z{I}=({A}^{B})",
+    "local _Z{I}=string.char({A},{B},{C})",
+    "local _Z{I}=table.concat({{string.char({A})}})",
+    "local _Z{I}=math.abs(({A})-({B}))",
+    "local _Z{I}=bit32.band({A},{B})",
+    "local _Z{I}=({A}*0+{B})",
+    "if ({A}~={B}) then local _={C} end",
   ];
 
-  function randId(prefix, used) {
-    const chars = "IlO0";
+  function randId(p, used) {
+    const c = "IlO0l1";
     let id;
     do {
-      id = prefix + Array.from({ length: 8 }, () => chars[(Math.random() * chars.length) | 0]).join("");
+      id = p + Array.from({ length: 10 }, () => c[(Math.random() * c.length) | 0]).join("");
     } while (used.has(id));
     used.add(id);
     return id;
   }
 
-  function randInt(min, max) {
-    return (Math.random() * (max - min + 1) | 0) + min;
+  function randInt(a, b) {
+    return (Math.random() * (b - a + 1) | 0) + a;
   }
 
-  function stripComments(src) {
-    return src
-      .replace(/--\[\[[\s\S]*?\]\]/g, "")
-      .replace(/--[^\n]*/g, "");
+  function stripComments(s) {
+    return s.replace(/--\[\[[\s\S]*?\]\]/g, "").replace(/--[^\n]*/g, "");
   }
 
   function extractStrings(src) {
@@ -49,7 +49,6 @@ window.LuauArmor = (function () {
     while (i < src.length) {
       const ch = src[i];
       if (ch === '"' || ch === "'") {
-        const q = ch;
         let j = i + 1;
         let val = "";
         while (j < src.length) {
@@ -58,13 +57,12 @@ window.LuauArmor = (function () {
             j += 2;
             continue;
           }
-          if (src[j] === q) break;
+          if (src[j] === ch) break;
           val += src[j++];
         }
-        const full = src.slice(i, j + 1);
         const id = strings.length;
-        strings.push({ raw: val, quote: q });
-        out += `__STR_${id}__`;
+        strings.push({ raw: val.replace(/\\(.)/g, "$1"), quote: ch });
+        out += `__S${id}__`;
         i = j + 1;
         continue;
       }
@@ -74,199 +72,182 @@ window.LuauArmor = (function () {
     return { body: out, strings };
   }
 
-  function restoreStrings(body, strings, replacer) {
-    return body.replace(/__STR_(\d+)__/g, (_, n) => replacer(strings[+n], +n));
+  function restore(body, strings, fn) {
+    return body.replace(/__S(\d+)__/g, (_, n) => fn(strings[+n], +n));
   }
 
-  function encryptStringLuau(str, key, fnName) {
-    const bytes = [];
-    for (let i = 0; i < str.length; i++) {
-      bytes.push(str.charCodeAt(i) ^ key);
-    }
-    return `${fnName}({${bytes.join(",")}},${key})`;
+  function multiLayerString(str, names) {
+    const k1 = randInt(1, 255);
+    const k2 = randInt(1, 255);
+    const bytes = [...str].map((c) => bit32xor(c.charCodeAt(0), k1) ^ k2);
+    return `${names.dec}({${bytes.join(",")}},${k1},${k2})`;
   }
 
-  function buildDecoder(names) {
-    return `
-local ${names.dec} = function(_t,_k)
-  local _r = {}
-  for _i = 1, #_t do
-    _r[_i] = string.char(bit32.bxor(_t[_i], _k))
-  end
-  return table.concat(_r)
-end`.trim();
+  function bit32xor(a, b) {
+    return a ^ b;
   }
 
-  function collectIdentifiers(src) {
-    const ids = new Map();
-    const re = /\b(local\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
+  function buildDecoder(n) {
+    return `local function ${n.dec}(t,k1,k2)
+  local r={}
+  for i=1,#t do r[i]=string.char(bit32.bxor(bit32.bxor(t[i],k1),k2)) end
+  return table.concat(r)
+end
+local function ${n.dec2}(t,k)
+  local r={}
+  for i=1,#t do r[i]=string.char(bit32.bxor(t[i],k)) end
+  return table.concat(r)
+end`;
+  }
+
+  function collectIds(src) {
+    const ids = new Set();
+    const re = /\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
     let m;
     while ((m = re.exec(src))) {
-      const name = m[2];
-      if (!GLOBALS.has(name) && !/^__STR_\d+__$/.test(name) && !name.startsWith("_J")) {
-        ids.set(name, (ids.get(name) || 0) + 1);
-      }
+      const n = m[1];
+      if (!GLOBALS.has(n) && !/^__S\d+__$/.test(n) && !n.startsWith("_Z")) ids.add(n);
     }
-    return [...ids.keys()].sort((a, b) => b.length - a.length);
+    return [...ids].sort((a, b) => b.length - a.length);
   }
 
-  function renameIdentifiers(src, enabled) {
-    if (!enabled) return src;
+  function rename(src, on) {
+    if (!on) return src;
     const used = new Set();
-    const names = collectIdentifiers(src);
-    let out = src;
     const map = new Map();
-    names.forEach((n) => map.set(n, randId("_", used)));
-    for (const [from, to] of map) {
-      out = out.replace(new RegExp(`\\b${from}\\b`, "g"), to);
-    }
+    collectIds(src).forEach((n) => map.set(n, randId("_", used)));
+    let out = src;
+    for (const [a, b] of map) out = out.replace(new RegExp(`\\b${a}\\b`, "g"), b);
     return out;
   }
 
-  function obfuscateNumbers(src, enabled) {
-    if (!enabled) return src;
-    return src.replace(/\b(\d{2,})\b/g, (n) => {
+  function obfNumbers(src, on) {
+    if (!on) return src;
+    return src.replace(/\b(\d+)\b/g, (n) => {
       const v = +n;
-      const a = randInt(1, v - 1);
-      const b = v - a;
-      const ops = [
-        `(${a}+${b})`,
-        `((${v + 3})-3)`,
-        `(bit32.bxor(${v ^ 0xff},255))`,
-        `(math.floor(${v / 2}+${v / 2}))`,
+      if (v < 2) return n;
+      const a = randInt(1, Math.max(1, v - 1));
+      const opts = [
+        `((${a}+${v - a}))`,
+        `(bit32.bxor(${v ^ 0xaa},170))`,
+        `(math.floor(${v}.0))`,
+        `(((${v << 0})>>0))`.replace("<<", "*").replace(">>", "/"),
       ];
-      return ops[(Math.random() * ops.length) | 0];
+      return opts[(Math.random() * opts.length) | 0];
     });
   }
 
-  function insertJunk(src, enabled, count) {
-    if (!enabled || count <= 0) return src;
+  function junk(src, on, n) {
+    if (!on || !n) return src;
     const lines = src.split("\n");
-    const used = new Set();
-    for (let i = 0; i < count; i++) {
-      const tpl = JUNK_TEMPLATES[(Math.random() * JUNK_TEMPLATES.length) | 0];
-      const line = tpl
-        .replace("{I}", i)
-        .replace("{N1}", randInt(2, 99))
-        .replace("{N2}", randInt(2, 99))
-        .replace("{N3}", randInt(65, 90))
-        .replace("{A}", String.fromCharCode(randInt(97, 122)))
-        .replace("{B}", String.fromCharCode(randInt(97, 122)));
-      const at = randInt(1, Math.max(1, lines.length - 1));
-      lines.splice(at, 0, line);
+    for (let i = 0; i < n; i++) {
+      const tpl = JUNK[(Math.random() * JUNK.length) | 0];
+      lines.splice(randInt(1, Math.max(1, lines.length - 1)), 0, tpl
+        .replace(/{I}/g, i)
+        .replace(/{A}/g, randInt(2, 99))
+        .replace(/{B}/g, randInt(2, 99))
+        .replace(/{C}/g, randInt(2, 99)));
     }
     return lines.join("\n");
   }
 
-  function wrapControlFlow(src, enabled) {
-    if (!enabled) return src;
-    const gate = randInt(1000, 9999);
-    return `
-do
-  local _G${gate} = (function()
-    if ((${gate} * 2) - ${gate}) == ${gate} then
-      return function()
-${src.split("\n").map((l) => "        " + l).join("\n")}
-      end
-    end
-  end)()
-  if _G${gate} then _G${gate}() end
-end`.trim();
+  function opaqueWrap(src, on) {
+    if (!on) return src;
+    const g = randInt(10000, 99999);
+    return `do local _G${g}=((function()if ((${g}*2)-${g})==${g} then return function()\n${src}\nend end end)())if _G${g} then _G${g}()end end`;
   }
 
-  function minify(src) {
-    return src
-      .replace(/[ \t]+/g, " ")
-      .replace(/ ?([,;=(){}[\]]) ?/g, "$1")
-      .replace(/\n{2,}/g, "\n")
-      .trim();
+  function vmWrap(src, on, names) {
+    if (!on) return src;
+    return `local ${names.vm}=loadstring([=[${src}]=])if ${names.vm} then ${names.vm}()end`;
   }
 
-  function wrapLoader(src) {
-    return `--[[ Prey.Wtf · LuauArmor · ${new Date().toISOString()} ]]
-local _src = [=[
-${src}
-]=]
-local _fn = loadstring(_src)
-if _fn then _fn() end`;
+  function splitEncode(src, on, names) {
+    if (!on) return src;
+    const chunks = [];
+    for (let i = 0; i < src.length; i += 48) chunks.push(src.slice(i, i + 48));
+    const encoded = chunks.map((c) => {
+      const bytes = [...c].map((ch) => ch.charCodeAt(0));
+      return `{${bytes.join(",")}}`;
+    });
+    return `local ${names.parts}={${encoded.join(",")}}\nlocal ${names.join}=""\nfor _,p in ipairs(${names.parts}) do for _,b in ipairs(p) do ${names.join}=${names.join}..string.char(b) end end\nloadstring(${names.join})()`;
+  }
+
+  function minify(s) {
+    return s.replace(/[ \t]+/g, " ").replace(/ ?([,;=(){}[\]]) ?/g, "$1").replace(/\n{2,}/g, "\n").trim();
   }
 
   const PRESETS = {
-    light: { strings: true, rename: false, numbers: false, junk: false, flow: false, minify: true, wrap: false, junkCount: 0 },
-    medium: { strings: true, rename: true, numbers: true, junk: true, flow: false, minify: true, wrap: false, junkCount: 4 },
-    heavy: { strings: true, rename: true, numbers: true, junk: true, flow: true, minify: true, wrap: true, junkCount: 10 },
-    maximum: { strings: true, rename: true, numbers: true, junk: true, flow: true, minify: true, wrap: true, junkCount: 22 },
+    light: { strings: true, rename: false, numbers: false, junk: false, flow: false, vm: false, split: false, minify: true, junkCount: 0 },
+    medium: { strings: true, rename: true, numbers: true, junk: true, flow: false, vm: false, split: false, minify: true, junkCount: 8 },
+    heavy: { strings: true, rename: true, numbers: true, junk: true, flow: true, vm: true, split: false, minify: true, junkCount: 18 },
+    maximum: { strings: true, rename: true, numbers: true, junk: true, flow: true, vm: true, split: true, minify: true, junkCount: 35 },
+    abyss: { strings: true, rename: true, numbers: true, junk: true, flow: true, vm: true, split: true, minify: true, junkCount: 50 },
   };
 
   function obfuscate(source, userOpts = {}) {
-    const opts = { ...PRESETS.heavy, ...userOpts };
+    const opts = { ...PRESETS.maximum, ...userOpts };
     const used = new Set();
-    const names = {
-      dec: randId("_D", used),
-      run: randId("_R", used),
-    };
+    const names = { dec: randId("_D", used), dec2: randId("_X", used), vm: randId("_V", used), parts: randId("_P", used), join: randId("_J", used) };
 
     let src = source.trim();
     if (!src) throw new Error("Paste Luau source first");
 
     src = stripComments(src);
-    const extracted = extractStrings(src);
+    const ex = extractStrings(src);
+    let body = ex.body;
 
-    let body = extracted.body;
     if (opts.strings) {
-      body = restoreStrings(body, extracted.strings, (s) => {
-        const key = randInt(1, 255);
-        return encryptStringLuau(s.raw, key, names.dec);
-      });
+      body = restore(body, ex.strings, (s) => multiLayerString(s.raw, names));
     } else {
-      body = restoreStrings(body, extracted.strings, (s) => `${s.quote}${s.raw}${s.quote}`);
+      body = restore(body, ex.strings, (s) => `${s.quote}${s.raw}${s.quote}`);
     }
 
-    body = renameIdentifiers(body, opts.rename);
-    body = obfuscateNumbers(body, opts.numbers);
-    body = insertJunk(body, opts.junk, opts.junkCount || 0);
-    body = wrapControlFlow(body, opts.flow);
+    body = rename(body, opts.rename);
+    body = obfNumbers(body, opts.numbers);
+    body = junk(body, opts.junk, opts.junkCount || 0);
+    body = opaqueWrap(body, opts.flow);
+    body = vmWrap(body, opts.vm, names);
+    body = splitEncode(body, opts.split, names);
     if (opts.minify) body = minify(body);
 
-    let output = body;
-    if (opts.strings) output = buildDecoder(names) + "\n" + output;
-    if (opts.wrap) output = wrapLoader(output);
+    let output = opts.strings ? buildDecoder(names) + "\n" + body : body;
 
-    const stats = {
-      inputBytes: source.length,
-      outputBytes: output.length,
-      stringsHidden: opts.strings ? extracted.strings.length : 0,
-      preset: opts.preset || "custom",
-      passes: Object.entries(opts).filter(([k, v]) => v === true && k !== "preset").map(([k]) => k),
+    return {
+      output,
+      stats: {
+        inputBytes: source.length,
+        outputBytes: output.length,
+        stringsHidden: opts.strings ? ex.strings.length : 0,
+        preset: opts.preset || "custom",
+        layers: ["strings", "rename", "numbers", "junk", "flow", "vm", "split"].filter((k) => opts[k]),
+      },
     };
-
-    return { output, stats };
   }
 
   async function sendToBot(webhook, payload) {
-    if (!webhook) throw new Error("Add a Discord webhook URL first");
+    if (!webhook) throw new Error("Add Discord webhook URL");
     const url = webhook.trim();
     if (!/^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//.test(url)) {
-      throw new Error("Webhook must be a Discord URL");
+      throw new Error("Invalid Discord webhook");
     }
-    const body = {
-      username: payload.botName || "Prey.Wtf · LuauArmor",
-      embeds: [{
-        title: "Obfuscation complete",
-        color: 0x6ec8ff,
-        fields: [
-          { name: "User", value: payload.user || "unknown", inline: true },
-          { name: "Preset", value: payload.preset || "custom", inline: true },
-          { name: "Size", value: `${payload.inputBytes} → ${payload.outputBytes} bytes`, inline: true },
-          { name: "Preview", value: "```lua\n" + payload.preview.slice(0, 900) + "\n```" },
-        ],
-        timestamp: new Date().toISOString(),
-      }],
-    };
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        username: payload.botName || "Prey.Wtf · LuauArmor",
+        embeds: [{
+          title: "Obfuscation complete",
+          color: 0x6ec8ff,
+          fields: [
+            { name: "User", value: payload.user || "?", inline: true },
+            { name: "Preset", value: payload.preset || "?", inline: true },
+            { name: "Size", value: `${payload.inputBytes} → ${payload.outputBytes}`, inline: true },
+            { name: "Preview", value: "```lua\n" + payload.preview.slice(0, 800) + "\n```" },
+          ],
+          timestamp: new Date().toISOString(),
+        }],
+      }),
     });
     if (!res.ok) throw new Error(`Bot returned ${res.status}`);
     return true;

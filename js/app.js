@@ -1,4 +1,4 @@
-const STORE = "prey.wtf.v3";
+const STORE = "prey.wtf.v4";
 
 const DEFAULT_LUA = `-- Prey.Wtf cloud config (demo)
 -- Visual editor only. Nothing here is executed remotely.
@@ -65,7 +65,7 @@ const defaultState = () => ({
     role: "UNIQUE CUSTOMER",
     id: "ENCRYPTED",
     balance: 106,
-    key: "ok-" + cryptoRandom(28),
+    key: "PK-" + cryptoRandom(20).toUpperCase(),
     hwid: "D8E-B4D9-****-G8CT",
     ip: "hidden",
     country: "United States",
@@ -77,7 +77,14 @@ const defaultState = () => ({
   theme: { build: "abyss", color: "", custom: "Abyss Theme" },
   unlocked: false,
   configs: [
-    { id: "default", name: "Default", lua: DEFAULT_LUA, updated: Date.now() },
+    {
+      id: "default",
+      name: "Default",
+      tableLua: ScriptBuilder.DEFAULT_TABLE,
+      logicLua: ScriptBuilder.DEFAULT_LOGIC,
+      lua: "",
+      updated: Date.now(),
+    },
   ],
   activeConfig: "default",
   messages: seedPeople.map(([user, text], i) => ({
@@ -85,13 +92,21 @@ const defaultState = () => ({
     text,
     at: hoursAgo(seedPeople.length - i),
   })),
+  auth: { loggedIn: false, key: "", at: 0, source: "" },
+  bot: {
+    webhook: "",
+    token: "",
+    name: "Prey.Wtf Bot",
+    validKeys: ["PK-DEMO-2026", "PK-PREY-WTF"],
+  },
+  broadcast: { syncUrl: "", webhook: "" },
   session: { used: true, started: Date.now() - 3600_000 },
   passwordSet: false,
   armor: {
     webhook: "",
     botName: "Prey.Wtf Bot",
-    preset: "heavy",
-    options: { ...LuauArmor.PRESETS.heavy },
+    preset: "abyss",
+    options: { ...LuauArmor.PRESETS.abyss },
     input: `-- Paste Luau here
 local msg = "Protected by Prey.Wtf"
 print(msg)
@@ -127,7 +142,9 @@ function load() {
       user: { ...base.user, ...(parsed.user || {}) },
       theme: { ...base.theme, ...(parsed.theme || {}) },
       armor: { ...base.armor, ...(parsed.armor || {}), options: { ...base.armor.options, ...(parsed.armor?.options || {}) } },
-      discord: parsed.user?.discord ? undefined : base.user.discord,
+      auth: { ...base.auth, ...(parsed.auth || {}) },
+      bot: { ...base.bot, ...(parsed.bot || {}), validKeys: parsed.bot?.validKeys || base.bot.validKeys },
+      broadcast: { ...base.broadcast, ...(parsed.broadcast || {}) },
     };
   } catch {
     return defaultState();
@@ -135,7 +152,15 @@ function load() {
 }
 
 function save() {
+  state.configs.forEach((c) => {
+    if (!c.tableLua) c.tableLua = ScriptBuilder.parseScript(c.lua).table;
+    if (!c.logicLua) c.logicLua = ScriptBuilder.parseScript(c.lua).logic;
+  });
   localStorage.setItem(STORE, JSON.stringify(state));
+}
+
+function rebuildAllConfigs() {
+  state.configs.forEach((c) => ScriptBuilder.rebuildConfig(c, { preset: state.armor.preset, user: state.user.name }));
 }
 
 let state = load();
@@ -182,9 +207,45 @@ function copy(text, label = "Copied") {
 }
 
 function setRoute(next) {
+  if (!state.auth.loggedIn && next !== "login") {
+    route = "login";
+    location.hash = "login";
+    renderLogin();
+    return;
+  }
   route = next;
   location.hash = next;
   render();
+}
+
+function renderLogin() {
+  const gate = document.getElementById("login-gate");
+  gate.classList.remove("hidden");
+  gate.innerHTML = `
+    <div class="login-card">
+      <h2>Prey<span style="color:var(--accent)">.</span>Wtf</h2>
+      <p>Enter your license key · verified through Discord bot</p>
+      <div class="field"><label>License key</label><input id="login-key" placeholder="PK-XXXXXXXX" value="${esc(state.auth.key)}" /></div>
+      <button class="btn white" id="login-go">Log in</button>
+      <p class="hint" style="margin-top:14px">Demo keys: PK-DEMO-2026 · PK-PREY-WTF · or your account key</p>
+    </div>
+  `;
+  gate.querySelector("#login-go").onclick = async () => {
+    const key = gate.querySelector("#login-key").value;
+    const res = await PreyAuth.login(key, state);
+    if (!res.ok) return toast(res.error || "Login failed");
+    save();
+    gate.classList.add("hidden");
+    toast("Logged in");
+    setRoute("home");
+  };
+  gate.querySelector("#login-key").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") gate.querySelector("#login-go").click();
+  });
+}
+
+function hideLoginGate() {
+  document.getElementById("login-gate")?.classList.add("hidden");
 }
 
 function currentConfig() {
@@ -204,6 +265,11 @@ function pages() {
 }
 
 function render() {
+  if (!state.auth.loggedIn) {
+    renderLogin();
+    return;
+  }
+  hideLoginGate();
   applyTheme();
   document.getElementById("user-chip").classList.toggle("hidden", route === "broadcast" || route === "configs" || route === "armor");
   document.getElementById("discord-fab").classList.toggle("hidden", route === "configs" || route === "armor");
@@ -212,6 +278,18 @@ function render() {
   const fn = pages()[route] || renderHome;
   view.innerHTML = "";
   view.appendChild(fn());
+  if (route === "broadcast") {
+    BroadcastHub.startPolling(state, () => {
+      save();
+      const box = document.getElementById("msgs");
+      if (!box) return;
+      box.innerHTML = "";
+      state.messages.slice(-50).forEach((m) => box.appendChild(messageRow(m)));
+      box.scrollTop = box.scrollHeight;
+    });
+  } else {
+    BroadcastHub.stopPolling();
+  }
 }
 
 function el(html) {
@@ -296,6 +374,14 @@ function renderSettings() {
           <button class="btn white" id="pw-save">Change</button>
         </article>
         <article class="card">
+          <div class="kicker">Discord bot</div>
+          <div class="field"><label>Webhook URL</label><input id="bot-webhook" value="${esc(state.bot.webhook)}" placeholder="https://discord.com/api/webhooks/…" /></div>
+          <div class="field"><label>Bot token</label><input id="bot-token" type="password" value="${esc(state.bot.token)}" placeholder="Stored locally in browser" /></div>
+          <div class="field"><label>Valid keys (comma separated)</label><input id="bot-keys" value="${esc((state.bot.validKeys || []).join(", "))}" /></div>
+          <div class="field"><label>Broadcast sync JSON URL</label><input id="bcast-sync" value="${esc(state.broadcast.syncUrl)}" placeholder="Optional raw JSON for shared chat" /></div>
+          <button class="btn white" id="bot-save">Save bot settings</button>
+        </article>
+        <article class="card">
           <div class="kicker">Color themes</div>
           <div class="themes" id="colors" style="margin-top:10px"></div>
         </article>
@@ -332,6 +418,15 @@ function renderSettings() {
   };
   page.querySelector("[data-copy=key]").onclick = () => copy(u.key, "Key copied");
   page.querySelector("#get-script").onclick = () => setRoute("armor");
+  page.querySelector("#bot-save").onclick = () => {
+    state.bot.webhook = page.querySelector("#bot-webhook").value.trim();
+    state.bot.token = page.querySelector("#bot-token").value.trim();
+    state.bot.validKeys = page.querySelector("#bot-keys").value.split(",").map((s) => s.trim()).filter(Boolean);
+    state.broadcast.syncUrl = page.querySelector("#bcast-sync").value.trim();
+    state.armor.webhook = state.bot.webhook;
+    save();
+    toast("Bot settings saved");
+  };
   page.querySelector("#pw-save").onclick = () => {
     const a = page.querySelector("#pw-new").value;
     const b = page.querySelector("#pw-conf").value;
@@ -475,7 +570,7 @@ function renderConfigs() {
         <div>
           <div class="pulse"></div>
           <p>Waiting for script execution…</p>
-          <p class="hint">Unlock to load a saved cloud config</p>
+          <p class="hint">Executor detected · unlock cloud configs</p>
           <button class="btn" id="unlock">Unlock preview</button>
         </div>
       </div>
@@ -490,27 +585,38 @@ function renderConfigs() {
   }
 
   const cfg = currentConfig();
+  if (!cfg.tableLua) cfg.tableLua = ScriptBuilder.parseScript(cfg.lua).table;
+  if (!cfg.logicLua) cfg.logicLua = ScriptBuilder.parseScript(cfg.lua).logic;
+  ScriptBuilder.rebuildConfig(cfg, { preset: state.armor.preset, user: state.user.name });
+  save();
+
   const page = el(`<section class="page" style="padding:72px 110px 24px 28px"></section>`);
   page.innerHTML = `
     <div class="editor-wrap">
       <article class="editor-card">
         <div class="editor-head">
-          <strong>Prey.Wtf</strong>
+          <strong>Cloud Config · ${esc(cfg.name)}</strong>
           <div class="head-btns">
-            <button class="btn tiny" id="reset">Reset</button>
+            <button class="btn tiny" id="cfg-rebuild">Rebuild script</button>
             <button class="btn tiny" id="exec">Execute</button>
           </div>
         </div>
-        <div class="editor-body">
-          <pre class="gutter" id="gutter"></pre>
-          <textarea id="lua" spellcheck="false">${esc(cfg.lua)}</textarea>
+        <div class="config-split">
+          <div class="config-pane">
+            <label>Config table (top of script)</label>
+            <textarea id="table-edit" spellcheck="false">${esc(cfg.tableLua)}</textarea>
+          </div>
+          <div class="config-pane readonly">
+            <label>Generated script · table + payload URL</label>
+            <textarea id="full-script" readonly spellcheck="false">${esc(cfg.lua)}</textarea>
+          </div>
         </div>
       </article>
       <aside class="side-card">
         <div class="side-head">
           <div>
             <h3>Cloud Configs</h3>
-            <p>Autosaved to this browser</p>
+            <p>Edit table · payload auto-updates</p>
           </div>
           <div class="add-row">
             <input id="cfg-name" placeholder="Config name" />
@@ -518,31 +624,47 @@ function renderConfigs() {
           </div>
         </div>
         <div class="config-list" id="cfg-list"></div>
+        <div style="padding:8px 12px">
+          <div class="kicker">Logic layer</div>
+          <textarea id="logic-edit" style="width:100%;min-height:100px;background:var(--input);border:1px solid var(--stroke);border-radius:10px;padding:8px;font-family:var(--mono);font-size:10px;color:#cfe0ff" spellcheck="false">${esc(cfg.logicLua)}</textarea>
+        </div>
       </aside>
     </div>
   `;
-  const ta = page.querySelector("#lua");
-  const gutter = page.querySelector("#gutter");
-  const syncGutter = () => {
-    const n = ta.value.split("\n").length;
-    gutter.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
-  };
-  syncGutter();
-  ta.addEventListener("input", () => {
-    cfg.lua = ta.value;
-    cfg.updated = Date.now();
+
+  const syncScript = () => {
+    cfg.tableLua = page.querySelector("#table-edit").value;
+    cfg.logicLua = page.querySelector("#logic-edit").value;
+    ScriptBuilder.rebuildConfig(cfg, { preset: state.armor.preset, user: state.user.name });
+    page.querySelector("#full-script").value = cfg.lua;
     save();
-    syncGutter();
+  };
+
+  let debounce;
+  page.querySelector("#table-edit").addEventListener("input", () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(syncScript, 400);
   });
-  page.querySelector("#reset").onclick = () => {
-    cfg.lua = DEFAULT_LUA;
-    save();
-    toast("Config reset");
-    render();
+  page.querySelector("#logic-edit").addEventListener("input", () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(syncScript, 400);
+  });
+
+  page.querySelector("#cfg-rebuild").onclick = () => {
+    syncScript();
+    toast("Script rebuilt with obfuscated payload");
   };
-  page.querySelector("#exec").onclick = () => {
-    toast("Queued locally · " + cfg.name);
+  page.querySelector("#exec").onclick = async () => {
+    syncScript();
+    toast(`Execute queued · ${cfg.name}`);
+    await PreyAuth.notifyBot(state.bot, "SCRIPT EXECUTE", {
+      user: state.user.name,
+      config: cfg.name,
+      executor: "Awaiting inject",
+      bytes: String(cfg.lua.length),
+    });
   };
+
   const list = page.querySelector("#cfg-list");
   state.configs.forEach((c) => {
     const row = el(`<button class="cfg ${c.id === cfg.id ? "active" : ""}"><span>${esc(c.name)}</span><small>${new Date(c.updated).toLocaleDateString()}</small></button>`);
@@ -557,7 +679,15 @@ function renderConfigs() {
   page.querySelector("#cfg-add").onclick = () => {
     const name = page.querySelector("#cfg-name").value.trim() || "New config";
     const id = cryptoRandom(8);
-    state.configs.push({ id, name, lua: DEFAULT_LUA, updated: Date.now() });
+    const nc = {
+      id, name,
+      tableLua: ScriptBuilder.DEFAULT_TABLE,
+      logicLua: ScriptBuilder.DEFAULT_LOGIC,
+      lua: "",
+      updated: Date.now(),
+    };
+    ScriptBuilder.rebuildConfig(nc, { preset: state.armor.preset, user: state.user.name });
+    state.configs.push(nc);
     state.activeConfig = id;
     state.user.configName = name;
     save();
@@ -569,195 +699,134 @@ function renderConfigs() {
 
 function renderArmor() {
   const a = state.armor;
-  const page = el(`<section class="page armor-page"></section>`);
+  const page = el(`<section class="page armor-v2"></section>`);
   page.innerHTML = `
-    <div class="armor-layout">
-      <article class="armor-panel">
-        <div class="armor-head">
-          <strong>LuauArmor</strong>
-          <div class="armor-tabs" id="presets"></div>
+    <div class="armor-shell">
+      <nav class="armor-nav">
+        <h3>LuauArmor v2</h3>
+        <button class="active" data-p="abyss">Abyss preset</button>
+        <button data-p="maximum">Maximum</button>
+        <button data-p="heavy">Heavy</button>
+        <button data-p="medium">Medium</button>
+        <button id="armor-load-config">Load cloud config</button>
+        <button id="armor-sync-config">Push to cloud</button>
+      </nav>
+      <div class="armor-main">
+        <div class="armor-main-head">
+          <strong>Obfuscation pipeline</strong>
           <div class="head-btns">
-            <button class="btn tiny" id="armor-load-config">Load config</button>
-            <button class="btn tiny" id="armor-clear">Clear</button>
+            <button class="btn tiny" id="armor-run">Run armor</button>
+            <button class="btn tiny" id="armor-copy">Copy</button>
           </div>
         </div>
-        <div class="armor-editors">
-          <div class="armor-editor">
-            <label>Input · Luau source</label>
-            <textarea id="armor-in" spellcheck="false"></textarea>
-          </div>
-          <div class="armor-editor">
-            <label>Output · Obfuscated</label>
-            <textarea id="armor-out" readonly spellcheck="false"></textarea>
-          </div>
+        <div class="armor-code">
+          <textarea id="armor-in" placeholder="Input Luau…" spellcheck="false">${esc(a.input || "")}</textarea>
+          <textarea id="armor-out" readonly placeholder="Obfuscated output…" spellcheck="false">${esc(a.output || "")}</textarea>
         </div>
-        <div class="armor-stats" id="armor-stats"></div>
-        <div class="armor-actions">
-          <button class="btn white" id="armor-run">Obfuscate</button>
-          <button class="btn" id="armor-copy">Copy output</button>
-          <button class="btn" id="armor-download">Download .lua</button>
-          <button class="btn white" id="armor-bot">Send to bot</button>
+        <div style="padding:10px 14px;border-top:1px solid var(--stroke)">
+          <div class="armor-meter"><i id="armor-bar" style="width:0%"></i></div>
+          <p class="hint" id="armor-meta" style="margin-top:8px">Ready</p>
         </div>
-      </article>
-      <aside class="armor-side">
-        <div class="armor-side-head">
-          <div>
-            <h3>Bot & passes</h3>
-            <p><span class="status-dot ${a.botOnline ? "live" : ""}"></span> ${a.botOnline ? "Connected (local)" : "Offline"}</p>
-          </div>
-        </div>
-        <div class="field"><label>Discord webhook</label><input id="armor-webhook" placeholder="https://discord.com/api/webhooks/..." value="${esc(a.webhook)}" /></div>
-        <div class="field"><label>Bot name</label><input id="armor-botname" value="${esc(a.botName)}" /></div>
+      </div>
+      <aside class="armor-bot">
+        <h3 style="font-size:13px">Discord bot</h3>
+        <div class="field"><label>Webhook</label><input id="armor-webhook" value="${esc(a.webhook || state.bot.webhook)}" placeholder="discord.com/api/webhooks/…" /></div>
+        <div class="field"><label>Bot token</label><input id="armor-token" type="password" value="${esc(state.bot.token)}" placeholder="Bot token (stored locally)" /></div>
         <div class="armor-options" id="armor-options"></div>
-        <div class="kicker" style="padding:0 12px 8px">Queue</div>
-        <div class="queue-list" id="armor-queue"></div>
+        <button class="btn white" id="armor-bot">Send to bot</button>
+        <div class="queue-list" id="armor-queue" style="flex:1;min-height:80px"></div>
       </aside>
     </div>
   `;
 
-  const presets = ["light", "medium", "heavy", "maximum"];
-  const presetBox = page.querySelector("#presets");
-  presets.forEach((p) => {
-    const btn = el(`<button class="${a.preset === p ? "active" : ""}">${p}</button>`);
+  page.querySelectorAll(".armor-nav button[data-p]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.p === a.preset);
     btn.onclick = () => {
-      a.preset = p;
-      a.options = { ...LuauArmor.PRESETS[p], preset: p };
+      a.preset = btn.dataset.p;
+      a.options = { ...LuauArmor.PRESETS[a.preset], preset: a.preset };
       save();
       render();
     };
-    presetBox.appendChild(btn);
   });
 
   const optKeys = [
-    ["strings", "Encrypt strings"],
-    ["rename", "Rename identifiers"],
-    ["numbers", "Obfuscate numbers"],
-    ["junk", "Insert junk code"],
-    ["flow", "Control-flow wrap"],
+    ["strings", "Multi-layer strings"],
+    ["rename", "Mangle identifiers"],
+    ["numbers", "Number opaque"],
+    ["junk", "Junk injection"],
+    ["flow", "Control-flow"],
+    ["vm", "VM loadstring wrap"],
+    ["split", "Split byte payload"],
     ["minify", "Minify"],
-    ["wrap", "Loadstring wrapper"],
   ];
   const optBox = page.querySelector("#armor-options");
   optKeys.forEach(([key, label]) => {
     const row = el(`<label class="opt"><span>${label}</span><input type="checkbox" data-opt="${key}" ${a.options[key] ? "checked" : ""} /></label>`);
-    row.querySelector("input").onchange = (e) => {
-      a.options[key] = e.target.checked;
-      save();
-    };
+    row.querySelector("input").onchange = (e) => { a.options[key] = e.target.checked; save(); };
     optBox.appendChild(row);
   });
 
   const input = page.querySelector("#armor-in");
   const output = page.querySelector("#armor-out");
-  input.value = a.input || "";
-  output.value = a.output || "";
+  input.oninput = () => { a.input = input.value; save(); };
 
-  input.oninput = () => {
-    a.input = input.value;
-    save();
-  };
+  page.querySelector("#armor-webhook").oninput = (e) => { a.webhook = e.target.value; state.bot.webhook = e.target.value; save(); };
+  page.querySelector("#armor-token").oninput = (e) => { state.bot.token = e.target.value; save(); };
 
-  page.querySelector("#armor-webhook").oninput = (e) => {
-    a.webhook = e.target.value;
-    save();
-  };
-  page.querySelector("#armor-botname").oninput = (e) => {
-    a.botName = e.target.value;
-    save();
-  };
-
-  const statsBox = page.querySelector("#armor-stats");
-  if (a.lastStats) {
-    statsBox.innerHTML = `
-      <div class="stat"><span>Input</span><strong>${a.lastStats.inputBytes}b</strong></div>
-      <div class="stat"><span>Output</span><strong>${a.lastStats.outputBytes}b</strong></div>
-      <div class="stat"><span>Strings</span><strong>${a.lastStats.stringsHidden}</strong></div>
-      <div class="stat"><span>Preset</span><strong>${esc(a.lastStats.preset)}</strong></div>
-    `;
-  }
-
-  const queueBox = page.querySelector("#armor-queue");
-  (a.queue.length ? a.queue : [{ status: "idle", text: "No jobs yet — obfuscate to queue" }]).slice(0, 12).forEach((job) => {
-    const cls = job.status === "done" ? "ok" : job.status === "failed" ? "fail" : job.status === "running" ? "pending" : "";
-    queueBox.appendChild(el(`<div class="queue-item"><span class="${cls}">${esc(job.status || "idle")}</span> · ${esc(job.text || "")}</div>`));
-  });
-
-  function obfuscateInput() {
-    const opts = { ...a.options, preset: a.preset, junkCount: LuauArmor.PRESETS[a.preset]?.junkCount ?? 8 };
+  function runArmor() {
+    const opts = { ...a.options, preset: a.preset, junkCount: LuauArmor.PRESETS[a.preset]?.junkCount ?? 20 };
     const result = LuauArmor.obfuscate(input.value, opts);
     a.output = result.output;
     a.lastStats = result.stats;
     output.value = result.output;
-    a.queue.unshift({ status: "done", text: `${result.stats.inputBytes}→${result.stats.outputBytes}b · ${a.preset}`, at: Date.now() });
-    a.queue = a.queue.slice(0, 20);
+    const pct = Math.min(100, Math.round((result.stats.outputBytes / Math.max(result.stats.inputBytes, 1)) * 40));
+    page.querySelector("#armor-bar").style.width = pct + "%";
+    page.querySelector("#armor-meta").textContent = `${result.stats.inputBytes}b → ${result.stats.outputBytes}b · ${result.stats.layers?.length || 0} layers · ${a.preset}`;
+    a.queue.unshift({ status: "done", text: `Armor ${a.preset}`, at: Date.now() });
+    a.queue = a.queue.slice(0, 15);
     save();
     return result;
   }
 
   page.querySelector("#armor-run").onclick = () => {
-    try {
-      obfuscateInput();
-      toast("Obfuscated");
-      render();
-    } catch (err) {
-      toast(err.message || "Obfuscation failed");
-    }
+    try { runArmor(); toast("Armor applied"); } catch (e) { toast(e.message); }
   };
-  page.querySelector("#armor-copy").onclick = () => copy(a.output || output.value, "Obfuscated script copied");
-  page.querySelector("#armor-download").onclick = () => {
-    if (!a.output) return toast("Obfuscate first");
-    const blob = new Blob([a.output], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "protected.lua";
-    link.click();
-    URL.revokeObjectURL(url);
-    toast("Downloaded protected.lua");
-  };
-  page.querySelector("#armor-clear").onclick = () => {
-    a.input = "";
-    a.output = "";
-    save();
-    render();
-  };
+  page.querySelector("#armor-copy").onclick = () => copy(a.output || output.value, "Copied");
   page.querySelector("#armor-load-config").onclick = () => {
-    a.input = currentConfig().lua;
+    const c = currentConfig();
+    input.value = c.logicLua || ScriptBuilder.parseScript(c.lua).logic;
+    a.input = input.value;
     save();
-    toast("Loaded active cloud config");
-    render();
+    toast("Loaded logic from cloud config");
+  };
+  page.querySelector("#armor-sync-config").onclick = () => {
+    try {
+      if (!a.output) runArmor();
+      const c = currentConfig();
+      c.logicLua = input.value;
+      ScriptBuilder.rebuildConfig(c, { preset: a.preset, user: state.user.name });
+      save();
+      toast("Cloud config updated with armor output");
+    } catch (e) { toast(e.message); }
   };
   page.querySelector("#armor-bot").onclick = async () => {
+    try { if (!a.output) runArmor(); } catch (e) { return toast(e.message); }
+    const webhook = a.webhook || state.bot.webhook;
     try {
-      if (!a.output) obfuscateInput();
-    } catch (err) {
-      return toast(err.message || "Obfuscation failed");
-    }
-    const job = { status: "running", text: "Posting to Discord bot…", at: Date.now() };
-    a.queue.unshift(job);
-    save();
-    render();
-    try {
-      await LuauArmor.sendToBot(a.webhook, {
-        botName: a.botName,
-        user: state.user.name,
-        preset: a.preset,
-        inputBytes: a.lastStats?.inputBytes || a.input.length,
-        outputBytes: a.output.length,
-        preview: a.output,
-      });
-      job.status = "done";
-      job.text = "Sent to Discord webhook";
-      toast("Bot received obfuscated script");
-    } catch (err) {
-      job.status = "failed";
-      job.text = err.message || "Bot send failed";
-      toast(job.text);
-    }
-    save();
-    render();
+      await LuauArmor.sendToBot(webhook, { botName: state.bot.name, user: state.user.name, preset: a.preset, inputBytes: a.lastStats?.inputBytes, outputBytes: a.output.length, preview: a.output });
+      toast("Sent to Discord bot");
+    } catch (e) { toast(e.message); }
   };
 
+  const queueBox = page.querySelector("#armor-queue");
+  (a.queue.length ? a.queue : [{ status: "idle", text: "Queue empty" }]).slice(0, 8).forEach((j) => {
+    queueBox.appendChild(el(`<div class="queue-item">${esc(j.status)} · ${esc(j.text)}</div>`));
+  });
+
+  if (a.lastStats) {
+    page.querySelector("#armor-bar").style.width = Math.min(100, Math.round(a.lastStats.outputBytes / 50)) + "%";
+    page.querySelector("#armor-meta").textContent = `${a.lastStats.inputBytes}b → ${a.lastStats.outputBytes}b`;
+  }
   return page;
 }
 
@@ -766,13 +835,15 @@ function messageRow(m) {
 }
 
 function renderBroadcast() {
+  const online = BroadcastHub.BOT_USERS.length + 1;
   const page = el(`<section class="page broadcast-page"></section>`);
   page.innerHTML = `
     <div class="broadcast-head">
       <div class="title">Broadcast</div>
-      <div class="subtitle">Chat with everyone</div>
+      <div class="subtitle">Chat with everyone · <em>${online} online</em></div>
     </div>
     <article class="broadcast-board">
+      <div class="bcast-online"><em>●</em> Live feed · other users appear automatically</div>
       <div class="feed-list" id="msgs"></div>
       <form class="composer" id="composer">
         <input name="text" placeholder="Type a message..." autocomplete="off" />
@@ -781,9 +852,9 @@ function renderBroadcast() {
     </article>
   `;
   const msgs = page.querySelector("#msgs");
-  state.messages.slice(-40).forEach((m) => msgs.appendChild(messageRow(m)));
+  state.messages.slice(-50).forEach((m) => msgs.appendChild(messageRow(m)));
   msgs.scrollTop = msgs.scrollHeight;
-  page.querySelector("#composer").onsubmit = (e) => {
+  page.querySelector("#composer").onsubmit = async (e) => {
     e.preventDefault();
     const input = e.target.text;
     const text = input.value.trim();
@@ -794,6 +865,8 @@ function renderBroadcast() {
     input.value = "";
     msgs.appendChild(messageRow(msg));
     msgs.scrollTop = msgs.scrollHeight;
+    const hook = state.broadcast.webhook || state.bot.webhook;
+    await BroadcastHub.postMessage(hook, state.user.name, text);
   };
   return page;
 }
@@ -816,6 +889,10 @@ document.addEventListener("click", (e) => {
 
 window.addEventListener("hashchange", () => {
   const next = location.hash.replace("#", "") || "home";
+  if (!state.auth.loggedIn) {
+    renderLogin();
+    return;
+  }
   if (next !== route) {
     route = pages()[next] ? next : "home";
     render();
@@ -824,24 +901,25 @@ window.addEventListener("hashchange", () => {
 
 document.getElementById("notify-btn").onclick = () => toast("No new notifications");
 document.getElementById("history-btn").onclick = () => setRoute("broadcast");
+document.getElementById("logout-btn").onclick = () => {
+  PreyAuth.logout(state);
+  save();
+  toast("Logged out");
+  renderLogin();
+};
+
+state.configs.forEach((c) => {
+  if (!c.tableLua) c.tableLua = ScriptBuilder.parseScript(c.lua || "").table;
+  if (!c.logicLua) c.logicLua = ScriptBuilder.parseScript(c.lua || "").logic;
+  if (!c.lua) ScriptBuilder.rebuildConfig(c, { preset: state.armor.preset, user: state.user.name });
+});
 
 route = location.hash.replace("#", "") || "home";
-if (!pages()[route]) route = "home";
-applyTheme();
-render();
-
-setInterval(() => {
-  if (route !== "broadcast") return;
-  if (Math.random() > 0.4) return;
-  const [user, text] = seedPeople[Math.floor(Math.random() * seedPeople.length)];
-  const last = state.messages[state.messages.length - 1];
-  if (last && last.user === user && last.text === text) return;
-  const msg = { user, text, at: Date.now() };
-  state.messages.push(msg);
-  if (state.messages.length > 80) state.messages = state.messages.slice(-80);
-  save();
-  const box = document.getElementById("msgs");
-  if (!box) return;
-  box.appendChild(messageRow(msg));
-  box.scrollTop = box.scrollHeight;
-}, 14000);
+if (route === "login") route = "home";
+if (!state.auth.loggedIn) {
+  renderLogin();
+} else {
+  if (!pages()[route]) route = "home";
+  applyTheme();
+  render();
+}
