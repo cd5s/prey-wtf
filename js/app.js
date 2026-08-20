@@ -1,4 +1,4 @@
-const STORE = "prey.wtf.v5";
+const STORE = "prey.wtf.v6";
 
 const DEFAULT_LUA = `-- Prey.Wtf cloud config (demo)
 -- Visual editor only. Nothing here is executed remotely.
@@ -80,8 +80,8 @@ const defaultState = () => ({
     {
       id: "default",
       name: "Default",
-      tableLua: ScriptBuilder.DEFAULT_TABLE,
-      logicLua: ScriptBuilder.DEFAULT_LOGIC,
+      tableLua: ScriptBuilder.tableBody(DEFAULT_LUA),
+      logicLua: "",
       lua: "",
       updated: Date.now(),
     },
@@ -154,7 +154,7 @@ function load() {
 function save() {
   state.configs.forEach((c) => {
     if (!c.tableLua) c.tableLua = ScriptBuilder.parseScript(c.lua).table;
-    if (!c.logicLua) c.logicLua = ScriptBuilder.parseScript(c.lua).logic;
+    if (!c.logicLua) c.logicLua = "";
   });
   localStorage.setItem(STORE, JSON.stringify(state));
 }
@@ -626,7 +626,7 @@ function renderConfigs() {
 
   const cfg = currentConfig();
   if (!cfg.tableLua) cfg.tableLua = ScriptBuilder.parseScript(cfg.lua).table;
-  if (!cfg.logicLua) cfg.logicLua = ScriptBuilder.parseScript(cfg.lua).logic;
+  if (!cfg.logicLua) cfg.logicLua = "";
   ScriptBuilder.rebuildConfig(cfg, { preset: state.armor.preset, user: state.user.name });
   save();
 
@@ -644,7 +644,7 @@ function renderConfigs() {
         </div>
         <div class="config-split">
           <div class="config-pane">
-            <label>Config table · saved to <code>shared.PreySaved</code></label>
+            <label>Config table · saved to <code>shared.saved</code></label>
             <textarea id="table-edit" spellcheck="false">${esc(cfg.tableLua)}</textarea>
           </div>
           <div class="config-pane readonly">
@@ -682,12 +682,12 @@ function renderConfigs() {
         <div class="config-list" id="cfg-list"></div>
         <div class="side-hint">
           <strong>How it runs</strong>
-          <p>The loader saves your table to <code>shared.PreySaved</code>, then <code>loadstring(game:HttpGet(...))</code> pulls the obfuscated payload from the public repo and executes it.</p>
-          <p>To go live: drop the payload file at <code>${esc(cfg.payloadPath || "p/…")}</code> in the <code>prey-wtf</code> repo.</p>
+          <p>The loader saves your table to <code>shared.saved</code>, then <code>loadstring(game:HttpGet(...))</code> runs <strong>your script</strong> from the hosted payload.</p>
+          <p><strong>Important:</strong> after Rebuild, run <code>node publish-payload.js default</code> so GitHub serves your latest script — then copy the loader.</p>
         </div>
         <div style="padding:8px 12px">
-          <div class="kicker">Logic layer (gets obfuscated)</div>
-          <textarea id="logic-edit" style="width:100%;min-height:96px;background:var(--input);border:1px solid var(--stroke);border-radius:10px;padding:8px;font-family:var(--mono);font-size:10px;color:#cfe0ff" spellcheck="false">${esc(cfg.logicLua)}</textarea>
+          <div class="kicker">Your script (obfuscated into payload)</div>
+          <textarea id="logic-edit" style="width:100%;min-height:220px;background:var(--input);border:1px solid var(--stroke);border-radius:10px;padding:8px;font-family:var(--mono);font-size:10px;color:#cfe0ff" spellcheck="false">${esc(cfg.logicLua)}</textarea>
         </div>
       </aside>
     </div>
@@ -722,7 +722,8 @@ function renderConfigs() {
 
   page.querySelector("#cfg-rebuild").onclick = () => {
     syncScript();
-    toast("Loader + payload rebuilt");
+    if (!cfg.payloadReady) toast("Paste your script in the editor, then publish payload");
+    else toast("Loader + payload rebuilt");
   };
   page.querySelector("#copy-loader").onclick = () => copy(cfg.loader || cfg.lua, "Loader copied");
   page.querySelector("#copy-payload").onclick = () => copy(cfg.payloadFile || "", "Payload copied");
@@ -762,8 +763,8 @@ function renderConfigs() {
     const id = cryptoRandom(8);
     const nc = {
       id, name,
-      tableLua: ScriptBuilder.DEFAULT_TABLE,
-      logicLua: ScriptBuilder.DEFAULT_LOGIC,
+      tableLua: ScriptBuilder.tableBody(DEFAULT_LUA),
+      logicLua: "",
       lua: "",
       updated: Date.now(),
     };
@@ -891,7 +892,7 @@ function renderArmor() {
   page.querySelector("#armor-copy").onclick = () => copy(a.output || output.value, "Copied");
   page.querySelector("#armor-load-config").onclick = () => {
     const c = currentConfig();
-    input.value = c.logicLua || ScriptBuilder.parseScript(c.lua).logic;
+    input.value = c.logicLua || "";
     a.input = input.value;
     save();
     toast("Loaded logic from cloud config");
@@ -1007,7 +1008,19 @@ document.getElementById("logout-btn").onclick = () => {
 
 state.configs.forEach((c) => {
   if (!c.tableLua) c.tableLua = ScriptBuilder.parseScript(c.lua || "").table;
-  if (!c.logicLua) c.logicLua = ScriptBuilder.parseScript(c.lua || "").logic;
+  if (!c.logicLua) c.logicLua = "";
+  if (ScriptBuilder.isPlaceholderLogic(c.logicLua) && c.id === "default") {
+    fetch("./payload-src/default.lua")
+      .then((r) => (r.ok ? r.text() : ""))
+      .then((src) => {
+        if (!src || !ScriptBuilder.isPlaceholderLogic(c.logicLua)) return;
+        c.logicLua = src;
+        ScriptBuilder.rebuildConfig(c, { preset: state.armor.preset, user: state.user.name });
+        save();
+        if (route === "configs") render();
+      })
+      .catch(() => {});
+  }
   if (!c.lua) ScriptBuilder.rebuildConfig(c, { preset: state.armor.preset, user: state.user.name });
 });
 

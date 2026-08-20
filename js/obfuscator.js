@@ -10,6 +10,8 @@ window.LuauArmor = (function () {
     "BrickColor", "Random", "require", "getgenv", "getrenv", "getgc", "gethui",
     "syn", "fluxus", "hookfunction", "newcclosure", "clonefunction", "identifyexecutor",
     "getexecutorname", "Config", "Prey", "shared", "_G", "HttpGet", "HttpGetAsync",
+    "Drawing", "Enum", "Instance", "Vector2", "Vector3", "Color3", "task", "Players",
+    "RunService", "UserInputService", "LocalPlayer", "Camera", "Humanoid", "DisplayName",
     "true", "false", "nil", "and", "or", "not",
     "if", "then", "else", "elseif", "end", "while", "do", "for", "in", "repeat",
     "until", "function", "local", "return", "break", "continue", "self",
