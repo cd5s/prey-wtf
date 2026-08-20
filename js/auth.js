@@ -3,7 +3,7 @@ window.PreyAuth = (function () {
   async function notifyBot(bot, event, data) {
     if (!bot?.webhook) return { ok: false, reason: "no_webhook" };
     const url = bot.webhook.trim();
-    if (!/^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//.test(url)) {
+    if (!/^https:\/\/(ptb\.|canary\.)?(discord\.com|discordapp\.com)\/api\/webhooks\//.test(url)) {
       return { ok: false, reason: "bad_webhook" };
     }
     const body = {

@@ -17,7 +17,7 @@ window.LuauArmor = (function () {
   const JUNK = [
     "local _Z{I}=({A}^{B})",
     "local _Z{I}=string.char({A},{B},{C})",
-    "local _Z{I}=table.concat({{string.char({A})}})",
+    "local _Z{I}=table.concat({string.char({A})})",
     "local _Z{I}=math.abs(({A})-({B}))",
     "local _Z{I}=bit32.band({A},{B})",
     "local _Z{I}=({A}*0+{B})",
@@ -206,12 +206,16 @@ end`;
     body = rename(body, opts.rename);
     body = obfNumbers(body, opts.numbers);
     body = junk(body, opts.junk, opts.junkCount || 0);
+
+    // Decoder must travel inside the payload so nested loadstring chunks can see it.
+    if (opts.strings) body = buildDecoder(names) + "\n" + body;
+
     body = opaqueWrap(body, opts.flow);
     body = vmWrap(body, opts.vm, names);
     body = splitEncode(body, opts.split, names);
     if (opts.minify) body = minify(body);
 
-    let output = opts.strings ? buildDecoder(names) + "\n" + body : body;
+    let output = body;
 
     return {
       output,
@@ -228,7 +232,7 @@ end`;
   async function sendToBot(webhook, payload) {
     if (!webhook) throw new Error("Add Discord webhook URL");
     const url = webhook.trim();
-    if (!/^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//.test(url)) {
+    if (!/^https:\/\/(ptb\.|canary\.)?(discord\.com|discordapp\.com)\/api\/webhooks\//.test(url)) {
       throw new Error("Invalid Discord webhook");
     }
     const res = await fetch(url, {

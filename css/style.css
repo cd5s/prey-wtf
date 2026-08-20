@@ -473,6 +473,12 @@ h1, .title { font-size: 15px; font-weight: 600; letter-spacing: 0.18em; text-tra
 
 .user-chip .btn.tiny { margin-left: 6px; height: 26px; }
 
+.wh-hint { font-size: 10px; color: var(--faint); margin: -4px 0 8px; line-height: 1.4; }
+.wh-hint.ok { color: var(--ok); }
+.wh-hint.bad { color: var(--danger); }
+.field input.ok, input.ok { border-color: rgba(61, 214, 140, 0.5) !important; }
+.field input.bad, input.bad { border-color: rgba(255, 107, 122, 0.5) !important; }
+
 .toasts {
   position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
   z-index: 50; display: flex; flex-direction: column; gap: 8px; pointer-events: none;

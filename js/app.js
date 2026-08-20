@@ -178,6 +178,44 @@ function toast(msg) {
   setTimeout(() => el.remove(), 2400);
 }
 
+const WEBHOOK_RE = /^https:\/\/(ptb\.|canary\.)?(discord\.com|discordapp\.com)\/api\/webhooks\/\d+\/[\w-]+$/;
+
+function isValidWebhook(url) {
+  return WEBHOOK_RE.test((url || "").trim());
+}
+
+function attachWebhookValidation(input) {
+  if (!input) return;
+  const hint = document.createElement("p");
+  hint.className = "wh-hint";
+  input.insertAdjacentElement("afterend", hint);
+  const update = () => {
+    const v = input.value.trim();
+    if (!v) {
+      input.classList.remove("ok", "bad");
+      hint.textContent = "Paste a Discord Webhook URL (Server Settings → Integrations → Webhooks)";
+      hint.className = "wh-hint";
+    } else if (isValidWebhook(v)) {
+      input.classList.add("ok");
+      input.classList.remove("bad");
+      hint.textContent = "Valid webhook ✓";
+      hint.className = "wh-hint ok";
+    } else if (/^[\w-]{20,}\.[\w-]+\.[\w-]+$/.test(v)) {
+      input.classList.add("bad");
+      input.classList.remove("ok");
+      hint.textContent = "That looks like a bot TOKEN, not a webhook URL — use the Bot token field instead";
+      hint.className = "wh-hint bad";
+    } else {
+      input.classList.add("bad");
+      input.classList.remove("ok");
+      hint.textContent = "Not a webhook URL. Format: https://discord.com/api/webhooks/ID/TOKEN";
+      hint.className = "wh-hint bad";
+    }
+  };
+  input.addEventListener("input", update);
+  update();
+}
+
 function applyTheme() {
   document.body.className = `theme-${state.theme.build} ${state.theme.color ? "color-" + state.theme.color : ""}`;
   document.getElementById("chip-name").textContent = state.user.name;
@@ -375,8 +413,8 @@ function renderSettings() {
         </article>
         <article class="card">
           <div class="kicker">Discord bot</div>
-          <div class="field"><label>Webhook URL</label><input id="bot-webhook" value="${esc(state.bot.webhook)}" placeholder="https://discord.com/api/webhooks/…" /></div>
-          <div class="field"><label>Bot token</label><input id="bot-token" type="password" value="${esc(state.bot.token)}" placeholder="Stored locally in browser" /></div>
+          <div class="field"><label>Discord Webhook URL</label><input id="bot-webhook" value="${esc(state.bot.webhook)}" placeholder="https://discord.com/api/webhooks/ID/TOKEN" /></div>
+          <div class="field"><label>Bot token (optional · unused on static site)</label><input id="bot-token" type="password" value="${esc(state.bot.token)}" placeholder="Only for a future backend bot" /></div>
           <div class="field"><label>Valid keys (comma separated)</label><input id="bot-keys" value="${esc((state.bot.validKeys || []).join(", "))}" /></div>
           <div class="field"><label>Broadcast sync JSON URL</label><input id="bcast-sync" value="${esc(state.broadcast.syncUrl)}" placeholder="Optional raw JSON for shared chat" /></div>
           <button class="btn white" id="bot-save">Save bot settings</button>
@@ -418,6 +456,7 @@ function renderSettings() {
   };
   page.querySelector("[data-copy=key]").onclick = () => copy(u.key, "Key copied");
   page.querySelector("#get-script").onclick = () => setRoute("armor");
+  attachWebhookValidation(page.querySelector("#bot-webhook"));
   page.querySelector("#bot-save").onclick = () => {
     state.bot.webhook = page.querySelector("#bot-webhook").value.trim();
     state.bot.token = page.querySelector("#bot-token").value.trim();
@@ -730,8 +769,8 @@ function renderArmor() {
       </div>
       <aside class="armor-bot">
         <h3 style="font-size:13px">Discord bot</h3>
-        <div class="field"><label>Webhook</label><input id="armor-webhook" value="${esc(a.webhook || state.bot.webhook)}" placeholder="discord.com/api/webhooks/…" /></div>
-        <div class="field"><label>Bot token</label><input id="armor-token" type="password" value="${esc(state.bot.token)}" placeholder="Bot token (stored locally)" /></div>
+        <div class="field"><label>Discord Webhook URL</label><input id="armor-webhook" value="${esc(a.webhook || state.bot.webhook)}" placeholder="https://discord.com/api/webhooks/ID/TOKEN" /></div>
+        <div class="field"><label>Bot token (optional · unused on static site)</label><input id="armor-token" type="password" value="${esc(state.bot.token)}" placeholder="Only for a future backend bot" /></div>
         <div class="armor-options" id="armor-options"></div>
         <button class="btn white" id="armor-bot">Send to bot</button>
         <div class="queue-list" id="armor-queue" style="flex:1;min-height:80px"></div>
@@ -770,8 +809,9 @@ function renderArmor() {
   const output = page.querySelector("#armor-out");
   input.oninput = () => { a.input = input.value; save(); };
 
-  page.querySelector("#armor-webhook").oninput = (e) => { a.webhook = e.target.value; state.bot.webhook = e.target.value; save(); };
+  page.querySelector("#armor-webhook").addEventListener("input", (e) => { a.webhook = e.target.value; state.bot.webhook = e.target.value; save(); });
   page.querySelector("#armor-token").oninput = (e) => { state.bot.token = e.target.value; save(); };
+  attachWebhookValidation(page.querySelector("#armor-webhook"));
 
   function runArmor() {
     const opts = { ...a.options, preset: a.preset, junkCount: LuauArmor.PRESETS[a.preset]?.junkCount ?? 20 };
