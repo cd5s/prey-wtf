@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prey.Wtf</title>
+  <script>
+    // GitHub Pages SPA fallback: bounce any unknown path (e.g. /p/<payload>)
+    // back into the app root, preserving anything after /prey-wtf/ as a hash.
+    (function () {
+      var base = "/prey-wtf/";
+      var path = window.location.pathname;
+      var rest = path.indexOf(base) === 0 ? path.slice(base.length) : "";
+      var target = base + (rest ? "#" + rest.replace(/\/$/, "") : "");
+      window.location.replace(target + window.location.search);
+    })();
+  </script>
+</head>
+<body>
+  <p style="font-family:system-ui;background:#070910;color:#6ec8ff;height:100vh;margin:0;display:grid;place-items:center">
+    Redirecting to Prey.Wtf…
+  </p>
+</body>
+</html>
