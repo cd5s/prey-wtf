@@ -1,4 +1,4 @@
-const STORE = "prey.wtf.v4";
+const STORE = "prey.wtf.v5";
 
 const DEFAULT_LUA = `-- Prey.Wtf cloud config (demo)
 -- Visual editor only. Nothing here is executed remotely.
@@ -261,8 +261,9 @@ function renderLogin() {
   gate.classList.remove("hidden");
   gate.innerHTML = `
     <div class="login-card">
-      <h2>Prey<span style="color:var(--accent)">.</span>Wtf</h2>
-      <p>Enter your license key · verified through Discord bot</p>
+      <h2 class="brand-grad">Prey.Wtf</h2>
+      <span class="polsec-badge">LuauArmor × PolSec</span>
+      <p style="margin-top:12px">Enter your license key · verified through Discord bot</p>
       <div class="field"><label>License key</label><input id="login-key" placeholder="PK-XXXXXXXX" value="${esc(state.auth.key)}" /></div>
       <button class="btn white" id="login-go">Log in</button>
       <p class="hint" style="margin-top:14px">Demo keys: PK-DEMO-2026 · PK-PREY-WTF · or your account key</p>
@@ -636,26 +637,42 @@ function renderConfigs() {
         <div class="editor-head">
           <strong>Cloud Config · ${esc(cfg.name)}</strong>
           <div class="head-btns">
-            <button class="btn tiny" id="cfg-rebuild">Rebuild script</button>
+            <button class="btn tiny" id="cfg-rebuild">Rebuild</button>
+            <button class="btn tiny" id="copy-loader">Copy loader</button>
             <button class="btn tiny" id="exec">Execute</button>
           </div>
         </div>
         <div class="config-split">
           <div class="config-pane">
-            <label>Config table (top of script)</label>
+            <label>Config table · saved to <code>shared.PreySaved</code></label>
             <textarea id="table-edit" spellcheck="false">${esc(cfg.tableLua)}</textarea>
           </div>
           <div class="config-pane readonly">
-            <label>Generated script · table + payload URL</label>
-            <textarea id="full-script" readonly spellcheck="false">${esc(cfg.lua)}</textarea>
+            <label>Loader · paste this into your executor</label>
+            <textarea id="full-script" readonly spellcheck="false">${esc(cfg.loader || cfg.lua)}</textarea>
           </div>
+        </div>
+        <div class="payload-bar">
+          <div class="payload-info">
+            <span class="kicker">Hosted payload</span>
+            <code id="payload-path">${esc(cfg.payloadPath || "")}</code>
+            <a id="payload-url" href="${esc(cfg.payloadUrl || "#")}" target="_blank" rel="noopener">${esc(cfg.payloadUrl || "")}</a>
+          </div>
+          <div class="payload-actions">
+            <button class="btn tiny" id="dl-payload">Download .lua</button>
+            <button class="btn tiny" id="copy-payload">Copy payload</button>
+          </div>
+        </div>
+        <div class="config-pane readonly payload-view">
+          <label>Obfuscated payload file · commit to <code>prey-wtf/${esc(cfg.payloadPath || "p/…")}</code></label>
+          <textarea id="payload-file" readonly spellcheck="false">${esc(cfg.payloadFile || "")}</textarea>
         </div>
       </article>
       <aside class="side-card">
         <div class="side-head">
           <div>
             <h3>Cloud Configs</h3>
-            <p>Edit table · payload auto-updates</p>
+            <p>Edit table · loader + payload auto-update</p>
           </div>
           <div class="add-row">
             <input id="cfg-name" placeholder="Config name" />
@@ -663,19 +680,33 @@ function renderConfigs() {
           </div>
         </div>
         <div class="config-list" id="cfg-list"></div>
+        <div class="side-hint">
+          <strong>How it runs</strong>
+          <p>The loader saves your table to <code>shared.PreySaved</code>, then <code>loadstring(game:HttpGet(...))</code> pulls the obfuscated payload from the public repo and executes it.</p>
+          <p>To go live: drop the payload file at <code>${esc(cfg.payloadPath || "p/…")}</code> in the <code>prey-wtf</code> repo.</p>
+        </div>
         <div style="padding:8px 12px">
-          <div class="kicker">Logic layer</div>
-          <textarea id="logic-edit" style="width:100%;min-height:100px;background:var(--input);border:1px solid var(--stroke);border-radius:10px;padding:8px;font-family:var(--mono);font-size:10px;color:#cfe0ff" spellcheck="false">${esc(cfg.logicLua)}</textarea>
+          <div class="kicker">Logic layer (gets obfuscated)</div>
+          <textarea id="logic-edit" style="width:100%;min-height:96px;background:var(--input);border:1px solid var(--stroke);border-radius:10px;padding:8px;font-family:var(--mono);font-size:10px;color:#cfe0ff" spellcheck="false">${esc(cfg.logicLua)}</textarea>
         </div>
       </aside>
     </div>
   `;
 
+  const refreshHosted = () => {
+    page.querySelector("#full-script").value = cfg.loader || cfg.lua;
+    page.querySelector("#payload-file").value = cfg.payloadFile || "";
+    page.querySelector("#payload-path").textContent = cfg.payloadPath || "";
+    const link = page.querySelector("#payload-url");
+    link.textContent = cfg.payloadUrl || "";
+    link.href = cfg.payloadUrl || "#";
+  };
+
   const syncScript = () => {
     cfg.tableLua = page.querySelector("#table-edit").value;
     cfg.logicLua = page.querySelector("#logic-edit").value;
     ScriptBuilder.rebuildConfig(cfg, { preset: state.armor.preset, user: state.user.name });
-    page.querySelector("#full-script").value = cfg.lua;
+    refreshHosted();
     save();
   };
 
@@ -691,7 +722,18 @@ function renderConfigs() {
 
   page.querySelector("#cfg-rebuild").onclick = () => {
     syncScript();
-    toast("Script rebuilt with obfuscated payload");
+    toast("Loader + payload rebuilt");
+  };
+  page.querySelector("#copy-loader").onclick = () => copy(cfg.loader || cfg.lua, "Loader copied");
+  page.querySelector("#copy-payload").onclick = () => copy(cfg.payloadFile || "", "Payload copied");
+  page.querySelector("#dl-payload").onclick = () => {
+    const blob = new Blob([cfg.payloadFile || ""], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${cfg.payloadId || "payload"}.lua`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast(`Downloaded ${cfg.payloadId}.lua`);
   };
   page.querySelector("#exec").onclick = async () => {
     syncScript();
@@ -742,7 +784,12 @@ function renderArmor() {
   page.innerHTML = `
     <div class="armor-shell">
       <nav class="armor-nav">
-        <h3>LuauArmor v2</h3>
+        <div class="armor-brand">
+          <h3 class="brand-grad">LuauArmor × PolSec</h3>
+        </div>
+        <span class="polsec-badge">PolSec engine</span>
+        <div class="armor-layers" id="armor-layers"></div>
+        <h3>Presets</h3>
         <button class="active" data-p="abyss">Abyss preset</button>
         <button data-p="maximum">Maximum</button>
         <button data-p="heavy">Heavy</button>
@@ -798,10 +845,20 @@ function renderArmor() {
     ["split", "Split byte payload"],
     ["minify", "Minify"],
   ];
+  const layersBox = page.querySelector("#armor-layers");
+  const renderLayers = () => {
+    layersBox.innerHTML = "";
+    optKeys.forEach(([key, label]) => {
+      const on = a.options[key];
+      layersBox.appendChild(el(`<div class="armor-layer ${on ? "on" : ""}"><span>${label}</span><i></i></div>`));
+    });
+  };
+  renderLayers();
+
   const optBox = page.querySelector("#armor-options");
   optKeys.forEach(([key, label]) => {
     const row = el(`<label class="opt"><span>${label}</span><input type="checkbox" data-opt="${key}" ${a.options[key] ? "checked" : ""} /></label>`);
-    row.querySelector("input").onchange = (e) => { a.options[key] = e.target.checked; save(); };
+    row.querySelector("input").onchange = (e) => { a.options[key] = e.target.checked; save(); renderLayers(); };
     optBox.appendChild(row);
   });
 

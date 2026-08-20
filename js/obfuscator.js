@@ -9,7 +9,8 @@ window.LuauArmor = (function () {
     "Instance", "Vector3", "CFrame", "Color3", "UDim2", "Enum", "Ray", "Region3",
     "BrickColor", "Random", "require", "getgenv", "getrenv", "getgc", "gethui",
     "syn", "fluxus", "hookfunction", "newcclosure", "clonefunction", "identifyexecutor",
-    "getexecutorname", "Config", "Prey", "true", "false", "nil", "and", "or", "not",
+    "getexecutorname", "Config", "Prey", "shared", "_G", "HttpGet", "HttpGetAsync",
+    "true", "false", "nil", "and", "or", "not",
     "if", "then", "else", "elseif", "end", "while", "do", "for", "in", "repeat",
     "until", "function", "local", "return", "break", "continue", "self",
   ]);
@@ -117,7 +118,9 @@ end`;
     const map = new Map();
     collectIds(src).forEach((n) => map.set(n, randId("_", used)));
     let out = src;
-    for (const [a, b] of map) out = out.replace(new RegExp(`\\b${a}\\b`, "g"), b);
+    // Negative lookbehind for "." and ":" so we never rename field/method names
+    // (e.g. string.char, bit32.bxor, Prey.Combat, obj:method).
+    for (const [a, b] of map) out = out.replace(new RegExp(`(?<![\\w.:])${a}\\b`, "g"), b);
     return out;
   }
 
@@ -131,7 +134,7 @@ end`;
         `((${a}+${v - a}))`,
         `(bit32.bxor(${v ^ 0xaa},170))`,
         `(math.floor(${v}.0))`,
-        `(((${v << 0})>>0))`.replace("<<", "*").replace(">>", "/"),
+        `((${v}*1))`,
       ];
       return opts[(Math.random() * opts.length) | 0];
     });
@@ -141,12 +144,18 @@ end`;
     if (!on || !n) return src;
     const lines = src.split("\n");
     for (let i = 0; i < n; i++) {
-      const tpl = JUNK[(Math.random() * JUNK.length) | 0];
-      lines.splice(randInt(1, Math.max(1, lines.length - 1)), 0, tpl
+      const line = JUNK[(Math.random() * JUNK.length) | 0]
         .replace(/{I}/g, i)
         .replace(/{A}/g, randInt(2, 99))
         .replace(/{B}/g, randInt(2, 99))
-        .replace(/{C}/g, randInt(2, 99)));
+        .replace(/{C}/g, randInt(2, 99));
+      // Never insert directly after a `return` (a statement after return is a Lua syntax error).
+      let idx = 0;
+      for (let tries = 0; tries < 6; tries++) {
+        const cand = randInt(1, Math.max(1, lines.length - 1));
+        if (!/^\s*return\b/.test(lines[cand - 1] || "")) { idx = cand; break; }
+      }
+      lines.splice(idx, 0, line);
     }
     return lines.join("\n");
   }
@@ -159,7 +168,9 @@ end`;
 
   function vmWrap(src, on, names) {
     if (!on) return src;
-    return `local ${names.vm}=loadstring([=[${src}]=])if ${names.vm} then ${names.vm}()end`;
+    let lvl = "=";
+    while (src.includes("]" + lvl + "]")) lvl += "=";
+    return `local ${names.vm}=loadstring([${lvl}[${src}]${lvl}])if ${names.vm} then ${names.vm}()end`;
   }
 
   function splitEncode(src, on, names) {
@@ -203,12 +214,13 @@ end`;
       body = restore(body, ex.strings, (s) => `${s.quote}${s.raw}${s.quote}`);
     }
 
+    // Decoder must travel inside the payload AND be renamed consistently with its call sites,
+    // so prepend it before the rename pass runs.
+    if (opts.strings) body = buildDecoder(names) + "\n" + body;
+
     body = rename(body, opts.rename);
     body = obfNumbers(body, opts.numbers);
     body = junk(body, opts.junk, opts.junkCount || 0);
-
-    // Decoder must travel inside the payload so nested loadstring chunks can see it.
-    if (opts.strings) body = buildDecoder(names) + "\n" + body;
 
     body = opaqueWrap(body, opts.flow);
     body = vmWrap(body, opts.vm, names);

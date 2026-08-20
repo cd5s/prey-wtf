@@ -1,10 +1,12 @@
-/* Builds Prey.Wtf scripts: config table top + URL payload bottom */
+/* Builds Prey.Wtf scripts.
+   Model: a SHORT loader (config table saved to shared + loadstring(game:HttpGet(url)))
+   plus a separately HOSTED obfuscated payload file that lives in the public repo /p/. */
 window.ScriptBuilder = (function () {
-  const TABLE_MARKER = "--[[ PREY:TABLE ]]";
-  const PAYLOAD_MARKER = "--[[ PREY:PAYLOAD ]]";
+  // Public GitHub Pages host that serves the obfuscated payload files.
   const PAYLOAD_HOST = "https://cd5s.github.io/prey-wtf/p/";
 
-  const DEFAULT_TABLE = `local Config = {
+  // The config table is a plain Lua object literal saved to shared.PreySaved.
+  const DEFAULT_TABLE = `{
   Combat = {
     SilentAim = { Enabled = true, HitChance = 100 },
     AimAssist = { Enabled = false, Smoothness = 6.16 },
@@ -14,9 +16,11 @@ window.ScriptBuilder = (function () {
   },
 }`;
 
-  const DEFAULT_LOGIC = `local Prey = getgenv().Prey or Config
-getgenv().Prey = Prey
-print("[Prey.Wtf] Config loaded ·", Prey.Combat and "Combat OK" or "Missing")`;
+  // The logic reads the config from shared (set by the loader) — this is what gets
+  // obfuscated and hosted as the payload file.
+  const DEFAULT_LOGIC = `local Config = shared.PreySaved or getgenv().PreySaved or {}
+getgenv().Prey = Config
+print("[Prey.Wtf] Config loaded ·", Config.Combat and "Combat OK" or "Missing")`;
 
   function b64Encode(str) {
     const bytes = new TextEncoder().encode(str);
@@ -33,9 +37,25 @@ print("[Prey.Wtf] Config loaded ·", Prey.Combat and "Combat OK" or "Missing")`;
     return new TextDecoder().decode(bytes);
   }
 
+  // Stable, filesystem-safe id for a config's hosted payload file.
+  function payloadId(cfg) {
+    if (cfg && cfg.id && /^[\w-]+$/.test(cfg.id)) return cfg.id;
+    const name = (cfg && cfg.name) || "cfg";
+    let h = 0;
+    for (const c of name) h = (h * 31 + c.charCodeAt(0)) | 0;
+    return "c" + Math.abs(h).toString(36);
+  }
+
+  // Normalise whatever the user typed in the table editor down to a `{ ... }` literal.
+  function tableBody(t) {
+    const s = (t || "").trim();
+    if (s.startsWith("{")) return s;
+    const m = s.match(/=\s*(\{[\s\S]*\})\s*;?\s*$/);
+    return m ? m[1] : s || DEFAULT_TABLE;
+  }
+
   function executorStub() {
-    return `-- Executor detection (runs on inject)
-local _Executor = "Unknown"
+    return `local _Executor = "Unknown"
 if identifyexecutor then
   local _ok, _name = pcall(identifyexecutor)
   if _ok and _name then _Executor = tostring(_name) end
@@ -47,108 +67,85 @@ print("[Prey.Wtf] Executor ·", _Executor)
 getgenv().PreyExecutor = _Executor`;
   }
 
-  function payloadDecoder(names) {
-    return `
-local function ${names.dec}(s)
-  s = s:gsub("-", "+"):gsub("_", "/")
-  local pad = (#s % 4)
-  if pad > 0 then s = s .. string.rep("=", 4 - pad) end
-  return (loadstring("return " .. string.char(108,111,97,100,115,116,114,105,110,103)(s))())
-end`.trim();
+  // The un-obfuscated payload source: executor detection + user logic.
+  function buildPayloadSource(logicLua) {
+    return `${executorStub()}\n\n${(logicLua || DEFAULT_LOGIC).trim()}`;
+  }
+
+  // The short loader the user copies into their executor.
+  function buildLoader(tableLua, payloadUrl, meta = {}) {
+    const body = tableBody(tableLua);
+    const stamp = new Date().toISOString().slice(0, 10);
+    return `--// Prey.Wtf loader · ${meta.user || "user"} · ${stamp}
+--// Your settings are saved to shared.PreySaved and read by the protected payload.
+shared.PreySaved = ${body}
+getgenv().PreySaved = shared.PreySaved
+
+loadstring(game:HttpGet("${payloadUrl}"))()`;
   }
 
   function parseScript(src) {
     if (!src) return { table: DEFAULT_TABLE, logic: DEFAULT_LOGIC };
-    if (src.includes(TABLE_MARKER) && src.includes(PAYLOAD_MARKER)) {
-      const parts = src.split(PAYLOAD_MARKER);
-      const tablePart = parts[0].replace(TABLE_MARKER, "").trim();
-      const rest = (parts[1] || "").trim();
-      const urlMatch = rest.match(/local _PayloadURL = "([^"]+)"/);
-      const logicMatch = rest.match(/local _Logic = \[\[\s*([\s\S]*?)\s*\]\]/);
-      return {
-        table: tablePart || DEFAULT_TABLE,
-        logic: logicMatch ? logicMatch[1].trim() : DEFAULT_LOGIC,
-        payloadUrl: urlMatch ? urlMatch[1] : "",
-      };
-    }
-    const tableMatch = src.match(/(?:local\s+Config\s*=|getgenv\(\)\.Prey\s*=)\s*(\{[\s\S]*?\n\})/);
-    if (tableMatch) {
-      return { table: `local Config = ${tableMatch[1]}`, logic: DEFAULT_LOGIC };
-    }
-    return { table: src.trim() || DEFAULT_TABLE, logic: DEFAULT_LOGIC };
+    const loaderMatch = src.match(/shared\.PreySaved\s*=\s*(\{[\s\S]*?\n\})/);
+    if (loaderMatch) return { table: loaderMatch[1], logic: DEFAULT_LOGIC };
+    const legacy = src.match(/(?:local\s+Config\s*=|getgenv\(\)\.Prey\s*=)\s*(\{[\s\S]*?\n\})/);
+    if (legacy) return { table: legacy[1], logic: DEFAULT_LOGIC };
+    return { table: DEFAULT_TABLE, logic: DEFAULT_LOGIC };
   }
 
+  // Kept for API compatibility: assemble a fully self-contained script (loader inlined
+  // with the payload embedded). Not used by the default flow but handy for exports.
   function buildFullScript(tableLua, logicLua, obfuscatedPayload, meta = {}) {
-    const payload = obfuscatedPayload || logicLua;
-    const bytes = [...payload].map((c) => c.charCodeAt(0));
-    const chunkSize = 80;
-    const chunks = [];
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      chunks.push("{" + bytes.slice(i, i + chunkSize).join(",") + "}");
-    }
-    const payloadUrl = meta.payloadUrl || `${PAYLOAD_HOST}${ScriptBuilder.b64Encode(payload).slice(0, 56)}`;
+    const payload = obfuscatedPayload || buildPayloadSource(logicLua);
+    return `${buildLoader(tableLua, meta.payloadUrl || PAYLOAD_HOST + "inline.lua", meta)}
 
-    return `${TABLE_MARKER}
---[[ Prey.Wtf · ${meta.user || "user"} · ${new Date().toISOString().slice(0, 10)} ]]
-${executorStub()}
-
-${tableLua.trim()}
-
-getgenv().Prey = Config
-
-${PAYLOAD_MARKER}
-local _PayloadURL = "${payloadUrl}"
-local _PayloadChunks = {${chunks.join(",")}}
-
-local function _BuildPayload(chunks)
-  local out = {}
-  for _, chunk in ipairs(chunks) do
-    for _, byte in ipairs(chunk) do
-      out[#out + 1] = string.char(byte)
-    end
-  end
-  return table.concat(out)
-end
-
-local _raw = _BuildPayload(_PayloadChunks)
-local _fn = loadstring(_raw)
-if _fn then
-  print("[Prey.Wtf] Executing protected payload on", getgenv().PreyExecutor or "Unknown")
-  _fn()
-else
-  warn("[Prey.Wtf] Payload failed to load")
-end`;
+--// Inline payload (for offline/self-hosted use):
+--[==[
+${payload}
+]==]`;
   }
 
   function rebuildConfig(cfg, obfuscateOpts) {
     const parsed = parseScript(cfg.lua);
-    const tableLua = cfg.tableLua || parsed.table;
+    const tableLua = tableBody(cfg.tableLua || parsed.table);
     const logicLua = cfg.logicLua || parsed.logic;
-    let obfuscated = logicLua;
+
+    const payloadSrc = buildPayloadSource(logicLua);
+    let obfuscated = payloadSrc;
     if (window.LuauArmor) {
       try {
         const opts = { ...LuauArmor.PRESETS[obfuscateOpts?.preset || "maximum"], ...obfuscateOpts };
-        obfuscated = LuauArmor.obfuscate(logicLua, opts).output;
+        obfuscated = LuauArmor.obfuscate(payloadSrc, opts).output;
       } catch {
-        obfuscated = logicLua;
+        obfuscated = payloadSrc;
       }
     }
+
+    const id = payloadId(cfg);
     cfg.tableLua = tableLua;
     cfg.logicLua = logicLua;
-    cfg.lua = buildFullScript(tableLua, logicLua, obfuscated, { user: obfuscateOpts?.user });
+    cfg.payloadId = id;
+    cfg.payloadPath = `p/${id}.lua`;
+    cfg.payloadUrl = `${PAYLOAD_HOST}${id}.lua`;
+    cfg.payloadFile = `--// Prey.Wtf protected payload · ${id} · auto-generated, do not edit\n${obfuscated}\n`;
+    cfg.loader = buildLoader(tableLua, cfg.payloadUrl, { user: obfuscateOpts?.user });
+    cfg.lua = cfg.loader;
     cfg.payload = b64Encode(obfuscated);
     cfg.updated = Date.now();
     return cfg;
   }
 
   return {
-    TABLE_MARKER,
-    PAYLOAD_MARKER,
+    PAYLOAD_HOST,
     DEFAULT_TABLE,
     DEFAULT_LOGIC,
     parseScript,
+    buildLoader,
+    buildPayloadSource,
     buildFullScript,
     rebuildConfig,
+    payloadId,
+    tableBody,
     b64Encode,
     b64Decode,
   };

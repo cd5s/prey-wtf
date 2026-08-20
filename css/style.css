@@ -479,6 +479,59 @@ h1, .title { font-size: 15px; font-weight: 600; letter-spacing: 0.18em; text-tra
 .field input.ok, input.ok { border-color: rgba(61, 214, 140, 0.5) !important; }
 .field input.bad, input.bad { border-color: rgba(255, 107, 122, 0.5) !important; }
 
+/* Loader + hosted payload UI */
+.config-split { flex: 1 1 auto; min-height: 240px; }
+.payload-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 14px; margin-top: 10px; flex-wrap: wrap;
+  border: 1px solid var(--stroke); border-radius: 14px;
+  background: linear-gradient(120deg, rgba(110,200,255,0.06), rgba(167,139,250,0.05));
+}
+.payload-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.payload-info .kicker { margin: 0; }
+.payload-info code { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+.payload-info a {
+  font-size: 10px; color: var(--muted); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(50vw, 460px);
+}
+.payload-info a:hover { color: var(--accent); }
+.payload-actions { display: flex; gap: 8px; }
+.payload-view { max-height: 180px; min-height: 120px; margin-top: 10px; }
+.side-hint { padding: 12px 14px; border-top: 1px solid var(--stroke); border-bottom: 1px solid var(--stroke); }
+.side-hint strong { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.side-hint p { font-size: 11px; color: #8fa3c4; margin-top: 6px; line-height: 1.5; }
+.side-hint code { font-family: var(--mono); font-size: 10px; color: var(--accent); background: rgba(110,200,255,0.08); padding: 1px 5px; border-radius: 5px; }
+
+/* PolSec branding + cool accents */
+@keyframes brand-flow { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+.brand-grad {
+  background: linear-gradient(90deg, var(--accent), #a78bfa, var(--accent-2), var(--accent));
+  background-size: 300% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: brand-flow 6s ease infinite;
+}
+.polsec-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 99px; color: #cfe0ff;
+  border: 1px solid rgba(167,139,250,0.4);
+  background: linear-gradient(120deg, rgba(110,200,255,0.12), rgba(167,139,250,0.14));
+}
+.polsec-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.armor-brand { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.armor-brand h3 { font-size: 14px; letter-spacing: 0.02em; margin: 0; }
+.armor-layers { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.armor-layer {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 10px; padding: 6px 10px; border-radius: 9px;
+  border: 1px solid var(--stroke); background: rgba(8,12,22,0.55); color: #b8c2d4;
+}
+.armor-layer.on { border-color: rgba(110,200,255,0.3); color: #e8f1ff; }
+.armor-layer i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.armor-layer.on i { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.btn.tiny { transition: transform .12s ease, background .12s ease; }
+.btn.tiny:hover { transform: translateY(-1px); }
+
 .toasts {
   position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
   z-index: 50; display: flex; flex-direction: column; gap: 8px; pointer-events: none;
