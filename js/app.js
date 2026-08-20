@@ -1,4 +1,4 @@
-const STORE = "prey.wtf.v1";
+const STORE = "prey.wtf.v3";
 
 const DEFAULT_LUA = `-- Prey.Wtf cloud config (demo)
 -- Visual editor only. Nothing here is executed remotely.
@@ -40,22 +40,23 @@ getgenv().Prey = {
 `;
 
 const seedPeople = [
-  ["SHO PM", "last seen"],
-  ["stiky", "yoooo"],
-  ["born", "chat im him"],
-  ["jottatod", "tuff"],
-  ["Jak", "wsg"],
-  ["lilgoldent", "uh"],
+  ["gg", "a"],
+  ["n0hv", "yoooo"],
+  ["ben", "chat im him"],
+  ["justatest", "tuff"],
+  ["Jah", "son"],
+  ["lifepelaez1", "uh"],
   ["born", "hi guys"],
   ["born", "how we doing"],
   ["born", "💀"],
-  ["nas", "N"],
-  ["jottatod", "12"],
-  ["genbuu8", "hello"],
-  ["xk", "n word"],
-  ["Osgid", "yn"],
-  ["Osgid", " Moogy"],
-  ["Punishere", "yoooo"],
+  ["nes", "hi"],
+  ["justatest", ":?"],
+  ["gorehill", "hello"],
+  ["xx", "yo"],
+  ["Oqjd", "yo"],
+  ["Oqjd", "neegy"],
+  ["Punchzxz", "yooo"],
+  ["canonninja", "hi"],
 ];
 
 const defaultState = () => ({
@@ -79,21 +80,26 @@ const defaultState = () => ({
     { id: "default", name: "Default", lua: DEFAULT_LUA, updated: Date.now() },
   ],
   activeConfig: "default",
-  messages: [
-    { user: "SHO PM", text: "a", at: hoursAgo(5) },
-    { user: "stiky", text: "yoooo", at: hoursAgo(4.8) },
-    { user: "born", text: "chat im him", at: hoursAgo(4.2) },
-    { user: "jottatod", text: "tuff", at: hoursAgo(3.9) },
-    { user: "Jak", text: "wsg", at: hoursAgo(3.5) },
-    { user: "lilgoldent", text: "uh", at: hoursAgo(3.1) },
-    { user: "born", text: "hi guys", at: hoursAgo(2.8) },
-    { user: "born", text: "how we doing", at: hoursAgo(2.4) },
-    { user: "nas", text: "N", at: hoursAgo(1.6) },
-    { user: "genbuu8", text: "hello", at: hoursAgo(1.1) },
-    { user: "Punishere", text: "yoooo", at: hoursAgo(0.4) },
-  ],
+  messages: seedPeople.map(([user, text], i) => ({
+    user,
+    text,
+    at: hoursAgo(seedPeople.length - i),
+  })),
   session: { used: true, started: Date.now() - 3600_000 },
   passwordSet: false,
+  armor: {
+    webhook: "",
+    botName: "Prey.Wtf Bot",
+    preset: "heavy",
+    options: { ...LuauArmor.PRESETS.heavy },
+    input: `-- Paste Luau here
+local msg = "Protected by Prey.Wtf"
+print(msg)
+`,
+    output: "",
+    queue: [],
+    botOnline: true,
+  },
 });
 
 function hoursAgo(h) {
@@ -113,7 +119,16 @@ function load() {
   try {
     const raw = localStorage.getItem(STORE);
     if (!raw) return defaultState();
-    return { ...defaultState(), ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    const base = defaultState();
+    return {
+      ...base,
+      ...parsed,
+      user: { ...base.user, ...(parsed.user || {}) },
+      theme: { ...base.theme, ...(parsed.theme || {}) },
+      armor: { ...base.armor, ...(parsed.armor || {}), options: { ...base.armor.options, ...(parsed.armor?.options || {}) } },
+      discord: parsed.user?.discord ? undefined : base.user.discord,
+    };
   } catch {
     return defaultState();
   }
@@ -125,7 +140,6 @@ function save() {
 
 let state = load();
 let route = "home";
-let chatFilter = "everyone";
 
 const view = document.getElementById("view");
 const rail = document.getElementById("rail");
@@ -185,14 +199,14 @@ function pages() {
     profile: renderProfile,
     broadcast: renderBroadcast,
     configs: renderConfigs,
+    armor: renderArmor,
   };
 }
 
 function render() {
   applyTheme();
-  const showChrome = route !== "broadcast";
-  document.getElementById("user-chip").classList.toggle("hidden", !showChrome || route === "configs");
-  document.getElementById("discord-fab").classList.toggle("hidden", route === "broadcast" || route === "configs");
+  document.getElementById("user-chip").classList.toggle("hidden", route === "broadcast" || route === "configs" || route === "armor");
+  document.getElementById("discord-fab").classList.toggle("hidden", route === "configs" || route === "armor");
   rail.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.route === route));
   document.getElementById("settings-btn").classList.toggle("active", route === "settings");
   const fn = pages()[route] || renderHome;
@@ -317,13 +331,7 @@ function renderSettings() {
     toast("Theme saved · " + e.target.value);
   };
   page.querySelector("[data-copy=key]").onclick = () => copy(u.key, "Key copied");
-  page.querySelector("#get-script").onclick = () => {
-    const snippet = `-- Prey.Wtf loader (demo / local only)
-print("Prey.Wtf · ${u.name}")
-print("key · ${u.key}")
-print("This dashboard does not fetch or execute remote scripts.")`;
-    copy(snippet, "Loader copied to clipboard");
-  };
+  page.querySelector("#get-script").onclick = () => setRoute("armor");
   page.querySelector("#pw-save").onclick = () => {
     const a = page.querySelector("#pw-new").value;
     const b = page.querySelector("#pw-conf").value;
@@ -559,86 +567,233 @@ function renderConfigs() {
   return page;
 }
 
-function renderBroadcast() {
-  const u = state.user;
-  const people = [{ name: "everyone", preview: "chat with everyone" }, ...seedPeople.map(([name, preview]) => ({ name, preview }))];
-  const page = el(`<section class="broadcast"></section>`);
-  const filtered = chatFilter === "everyone"
-    ? state.messages
-    : state.messages.filter((m) => m.user.toLowerCase() === chatFilter.toLowerCase());
-
+function renderArmor() {
+  const a = state.armor;
+  const page = el(`<section class="page armor-page"></section>`);
   page.innerHTML = `
-    <aside class="chat-rail">
-      <h4>Broadcast</h4>
-      <div class="sub">Chat with everyone</div>
-      <div class="people" id="people"></div>
-    </aside>
-    <div class="chat-main">
-      <div class="chat-top">
-        <div class="title">Broadcast</div>
-        <div class="head-btns">
-          <button class="btn tiny" id="bc-reset">Reset</button>
-          <button class="btn tiny" id="bc-exec">Execute</button>
+    <div class="armor-layout">
+      <article class="armor-panel">
+        <div class="armor-head">
+          <strong>LuauArmor</strong>
+          <div class="armor-tabs" id="presets"></div>
+          <div class="head-btns">
+            <button class="btn tiny" id="armor-load-config">Load config</button>
+            <button class="btn tiny" id="armor-clear">Clear</button>
+          </div>
         </div>
-      </div>
-      <article class="card pad-lg welcome">
-        <div class="avatar" id="bc-av"></div>
-        <div class="meta">
-          <div class="kicker">Welcome back</div>
-          <h2>${esc(u.name)}</h2>
-          <div class="badge">${esc(u.role)}</div>
+        <div class="armor-editors">
+          <div class="armor-editor">
+            <label>Input · Luau source</label>
+            <textarea id="armor-in" spellcheck="false"></textarea>
+          </div>
+          <div class="armor-editor">
+            <label>Output · Obfuscated</label>
+            <textarea id="armor-out" readonly spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div class="armor-stats" id="armor-stats"></div>
+        <div class="armor-actions">
+          <button class="btn white" id="armor-run">Obfuscate</button>
+          <button class="btn" id="armor-copy">Copy output</button>
+          <button class="btn" id="armor-download">Download .lua</button>
+          <button class="btn white" id="armor-bot">Send to bot</button>
         </div>
       </article>
-      <article class="card" style="margin-top:12px">
-        <div class="key-row">
-          <div class="kicker">🔑 License key</div>
-          <button class="btn tiny" data-copy="key">Copy</button>
+      <aside class="armor-side">
+        <div class="armor-side-head">
+          <div>
+            <h3>Bot & passes</h3>
+            <p><span class="status-dot ${a.botOnline ? "live" : ""}"></span> ${a.botOnline ? "Connected (local)" : "Offline"}</p>
+          </div>
         </div>
-        <div class="key-box"><code>${esc(u.key)}</code></div>
-        <p class="hint">Have to love / can copy to clipboard</p>
-      </article>
-      <div class="messages" id="msgs" style="margin-top:12px"></div>
-      <form class="composer" id="composer">
-        <input name="text" placeholder="Type a message" autocomplete="off" />
-        <button class="btn white" type="submit">Send</button>
-      </form>
+        <div class="field"><label>Discord webhook</label><input id="armor-webhook" placeholder="https://discord.com/api/webhooks/..." value="${esc(a.webhook)}" /></div>
+        <div class="field"><label>Bot name</label><input id="armor-botname" value="${esc(a.botName)}" /></div>
+        <div class="armor-options" id="armor-options"></div>
+        <div class="kicker" style="padding:0 12px 8px">Queue</div>
+        <div class="queue-list" id="armor-queue"></div>
+      </aside>
     </div>
   `;
-  paintAvatar(page.querySelector("#bc-av"), u.name);
-  const peopleEl = page.querySelector("#people");
-  people.forEach((p, i) => {
-    const active = (p.name === "everyone" && chatFilter === "everyone") || p.name === chatFilter;
-    const row = el(`<button class="person ${active ? "active" : ""}"><b>${esc(p.name)}</b><span>${i === 0 ? "LIVE" : fmtTime(Date.now())}</span><em>${esc(p.preview)}</em></button>`);
-    row.onclick = () => {
-      chatFilter = p.name === "everyone" ? "everyone" : p.name;
+
+  const presets = ["light", "medium", "heavy", "maximum"];
+  const presetBox = page.querySelector("#presets");
+  presets.forEach((p) => {
+    const btn = el(`<button class="${a.preset === p ? "active" : ""}">${p}</button>`);
+    btn.onclick = () => {
+      a.preset = p;
+      a.options = { ...LuauArmor.PRESETS[p], preset: p };
+      save();
       render();
     };
-    peopleEl.appendChild(row);
+    presetBox.appendChild(btn);
   });
-  const msgs = page.querySelector("#msgs");
-  filtered.slice(-40).forEach((m) => {
-    msgs.appendChild(el(`<div class="msg"><div><span class="who">${esc(m.user)}</span><span class="when">${fmtTime(m.at)}</span></div><p>${esc(m.text)}</p></div>`));
+
+  const optKeys = [
+    ["strings", "Encrypt strings"],
+    ["rename", "Rename identifiers"],
+    ["numbers", "Obfuscate numbers"],
+    ["junk", "Insert junk code"],
+    ["flow", "Control-flow wrap"],
+    ["minify", "Minify"],
+    ["wrap", "Loadstring wrapper"],
+  ];
+  const optBox = page.querySelector("#armor-options");
+  optKeys.forEach(([key, label]) => {
+    const row = el(`<label class="opt"><span>${label}</span><input type="checkbox" data-opt="${key}" ${a.options[key] ? "checked" : ""} /></label>`);
+    row.querySelector("input").onchange = (e) => {
+      a.options[key] = e.target.checked;
+      save();
+    };
+    optBox.appendChild(row);
   });
-  msgs.scrollTop = msgs.scrollHeight;
-  page.querySelector("[data-copy=key]").onclick = () => copy(u.key);
-  page.querySelector("#bc-reset").onclick = () => {
-    state.messages = defaultState().messages;
+
+  const input = page.querySelector("#armor-in");
+  const output = page.querySelector("#armor-out");
+  input.value = a.input || "";
+  output.value = a.output || "";
+
+  input.oninput = () => {
+    a.input = input.value;
     save();
-    toast("Chat reset");
+  };
+
+  page.querySelector("#armor-webhook").oninput = (e) => {
+    a.webhook = e.target.value;
+    save();
+  };
+  page.querySelector("#armor-botname").oninput = (e) => {
+    a.botName = e.target.value;
+    save();
+  };
+
+  const statsBox = page.querySelector("#armor-stats");
+  if (a.lastStats) {
+    statsBox.innerHTML = `
+      <div class="stat"><span>Input</span><strong>${a.lastStats.inputBytes}b</strong></div>
+      <div class="stat"><span>Output</span><strong>${a.lastStats.outputBytes}b</strong></div>
+      <div class="stat"><span>Strings</span><strong>${a.lastStats.stringsHidden}</strong></div>
+      <div class="stat"><span>Preset</span><strong>${esc(a.lastStats.preset)}</strong></div>
+    `;
+  }
+
+  const queueBox = page.querySelector("#armor-queue");
+  (a.queue.length ? a.queue : [{ status: "idle", text: "No jobs yet — obfuscate to queue" }]).slice(0, 12).forEach((job) => {
+    const cls = job.status === "done" ? "ok" : job.status === "failed" ? "fail" : job.status === "running" ? "pending" : "";
+    queueBox.appendChild(el(`<div class="queue-item"><span class="${cls}">${esc(job.status || "idle")}</span> · ${esc(job.text || "")}</div>`));
+  });
+
+  function obfuscateInput() {
+    const opts = { ...a.options, preset: a.preset, junkCount: LuauArmor.PRESETS[a.preset]?.junkCount ?? 8 };
+    const result = LuauArmor.obfuscate(input.value, opts);
+    a.output = result.output;
+    a.lastStats = result.stats;
+    output.value = result.output;
+    a.queue.unshift({ status: "done", text: `${result.stats.inputBytes}→${result.stats.outputBytes}b · ${a.preset}`, at: Date.now() });
+    a.queue = a.queue.slice(0, 20);
+    save();
+    return result;
+  }
+
+  page.querySelector("#armor-run").onclick = () => {
+    try {
+      obfuscateInput();
+      toast("Obfuscated");
+      render();
+    } catch (err) {
+      toast(err.message || "Obfuscation failed");
+    }
+  };
+  page.querySelector("#armor-copy").onclick = () => copy(a.output || output.value, "Obfuscated script copied");
+  page.querySelector("#armor-download").onclick = () => {
+    if (!a.output) return toast("Obfuscate first");
+    const blob = new Blob([a.output], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "protected.lua";
+    link.click();
+    URL.revokeObjectURL(url);
+    toast("Downloaded protected.lua");
+  };
+  page.querySelector("#armor-clear").onclick = () => {
+    a.input = "";
+    a.output = "";
+    save();
     render();
   };
-  page.querySelector("#bc-exec").onclick = () => toast("Nothing to execute in broadcast");
+  page.querySelector("#armor-load-config").onclick = () => {
+    a.input = currentConfig().lua;
+    save();
+    toast("Loaded active cloud config");
+    render();
+  };
+  page.querySelector("#armor-bot").onclick = async () => {
+    try {
+      if (!a.output) obfuscateInput();
+    } catch (err) {
+      return toast(err.message || "Obfuscation failed");
+    }
+    const job = { status: "running", text: "Posting to Discord bot…", at: Date.now() };
+    a.queue.unshift(job);
+    save();
+    render();
+    try {
+      await LuauArmor.sendToBot(a.webhook, {
+        botName: a.botName,
+        user: state.user.name,
+        preset: a.preset,
+        inputBytes: a.lastStats?.inputBytes || a.input.length,
+        outputBytes: a.output.length,
+        preview: a.output,
+      });
+      job.status = "done";
+      job.text = "Sent to Discord webhook";
+      toast("Bot received obfuscated script");
+    } catch (err) {
+      job.status = "failed";
+      job.text = err.message || "Bot send failed";
+      toast(job.text);
+    }
+    save();
+    render();
+  };
+
+  return page;
+}
+
+function messageRow(m) {
+  return el(`<div class="feed-row"><b>${esc(m.user)}</b><time>${fmtTime(m.at)}</time><span>${esc(m.text)}</span></div>`);
+}
+
+function renderBroadcast() {
+  const page = el(`<section class="page broadcast-page"></section>`);
+  page.innerHTML = `
+    <div class="broadcast-head">
+      <div class="title">Broadcast</div>
+      <div class="subtitle">Chat with everyone</div>
+    </div>
+    <article class="broadcast-board">
+      <div class="feed-list" id="msgs"></div>
+      <form class="composer" id="composer">
+        <input name="text" placeholder="Type a message..." autocomplete="off" />
+        <button class="btn white" type="submit">Send</button>
+      </form>
+    </article>
+  `;
+  const msgs = page.querySelector("#msgs");
+  state.messages.slice(-40).forEach((m) => msgs.appendChild(messageRow(m)));
+  msgs.scrollTop = msgs.scrollHeight;
   page.querySelector("#composer").onsubmit = (e) => {
     e.preventDefault();
     const input = e.target.text;
     const text = input.value.trim();
     if (!text) return;
-    state.messages.push({ user: state.user.name, text, at: Date.now() });
+    const msg = { user: state.user.name, text, at: Date.now() };
+    state.messages.push(msg);
     save();
     input.value = "";
-    render();
-    const box = document.getElementById("msgs");
-    if (box) box.scrollTop = box.scrollHeight;
+    msgs.appendChild(messageRow(msg));
+    msgs.scrollTop = msgs.scrollHeight;
   };
   return page;
 }
@@ -668,6 +823,7 @@ window.addEventListener("hashchange", () => {
 });
 
 document.getElementById("notify-btn").onclick = () => toast("No new notifications");
+document.getElementById("history-btn").onclick = () => setRoute("broadcast");
 
 route = location.hash.replace("#", "") || "home";
 if (!pages()[route]) route = "home";
@@ -676,12 +832,16 @@ render();
 
 setInterval(() => {
   if (route !== "broadcast") return;
-  if (Math.random() > 0.35) return;
+  if (Math.random() > 0.4) return;
   const [user, text] = seedPeople[Math.floor(Math.random() * seedPeople.length)];
   const last = state.messages[state.messages.length - 1];
   if (last && last.user === user && last.text === text) return;
-  state.messages.push({ user, text, at: Date.now() });
+  const msg = { user, text, at: Date.now() };
+  state.messages.push(msg);
   if (state.messages.length > 80) state.messages = state.messages.slice(-80);
   save();
-  render();
+  const box = document.getElementById("msgs");
+  if (!box) return;
+  box.appendChild(messageRow(msg));
+  box.scrollTop = box.scrollHeight;
 }, 14000);
