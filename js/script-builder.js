@@ -2,6 +2,7 @@
 window.ScriptBuilder = (function () {
   const TABLE_MARKER = "--[[ PREY:TABLE ]]";
   const PAYLOAD_MARKER = "--[[ PREY:PAYLOAD ]]";
+  const PAYLOAD_HOST = "https://cd5s.github.io/prey-wtf/p/";
 
   const DEFAULT_TABLE = `local Config = {
   Combat = {
@@ -85,7 +86,7 @@ end`.trim();
     for (let i = 0; i < bytes.length; i += chunkSize) {
       chunks.push("{" + bytes.slice(i, i + chunkSize).join(",") + "}");
     }
-    const payloadUrl = meta.payloadUrl || `https://prey.wtf/p/${ScriptBuilder.b64Encode(payload).slice(0, 56)}`;
+    const payloadUrl = meta.payloadUrl || `${PAYLOAD_HOST}${ScriptBuilder.b64Encode(payload).slice(0, 56)}`;
 
     return `${TABLE_MARKER}
 --[[ Prey.Wtf · ${meta.user || "user"} · ${new Date().toISOString().slice(0, 10)} ]]
